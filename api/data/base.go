@@ -56,7 +56,7 @@ func isTestMode() bool {
 const PRAGMA = `
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
-PRAGMA cache_size = -64000;
+PRAGMA cache_size = -40000;
 PRAGMA temp_store = MEMORY;
 PRAGMA busy_timeout = 10000;
 PRAGMA foreign_keys = ON;
@@ -160,11 +160,12 @@ func initPrimaryDB() error {
 
 	// Load schema for primary database
 	dao := PrimaryDao{Database: Database{
-		Client:        db,
-		Schema:        SchemaCache{},
-		ID:            1,
-		TemplateID:    0, // Primary database doesn't use templates
-		SchemaVersion: 0,
+		Client:          db,
+		Schema:          SchemaCache{},
+		ID:              1,
+		TemplateID:      0, // Primary database doesn't use templates
+		SchemaVersion:   0,
+		DatabaseVersion: 0,
 	}}
 	if err := dao.Database.updateSchema(); err != nil {
 		primaryDB = nil
@@ -206,11 +207,12 @@ func ConnPrimary() (PrimaryDao, error) {
 
 	return PrimaryDao{
 		Database: Database{
-			Client:        primaryDB,
-			Schema:        schema,
-			ID:            1,
-			TemplateID:    0,
-			SchemaVersion: 0,
+			Client:          primaryDB,
+			Schema:          schema,
+			ID:              1,
+			TemplateID:      0,
+			SchemaVersion:   0,
+			DatabaseVersion: 0,
 		},
 	}, nil
 }
@@ -255,12 +257,6 @@ func (dao PrimaryDao) ConnTurso(dbName string) (Database, error) {
 		return Database{}, fmt.Errorf("failed to load schema: %w", err)
 	}
 
-	// Check if database is in sync with current template version
-	if templateID != 0 && databaseVersion != currentVersion {
-		return Database{}, fmt.Errorf("%w: database at version %d, current is %d",
-			tools.ErrDatabaseOutOfSync, databaseVersion, currentVersion)
-	}
-
 	client, err := sql.Open("libsql", fmt.Sprintf("libsql://%s-%s.turso.io?authToken=%s", dbName, org, token))
 	if err != nil {
 		return Database{}, err
@@ -273,11 +269,12 @@ func (dao PrimaryDao) ConnTurso(dbName string) (Database, error) {
 	}
 
 	return Database{
-		Client:        client,
-		Schema:        schema,
-		ID:            id.Int32,
-		TemplateID:    templateID,
-		SchemaVersion: currentVersion,
+		Client:          client,
+		Schema:          schema,
+		ID:              id.Int32,
+		TemplateID:      templateID,
+		SchemaVersion:   currentVersion,
+		DatabaseVersion: databaseVersion,
 	}, nil
 }
 

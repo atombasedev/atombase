@@ -1,4 +1,4 @@
-import type { SchemaDefinition, TableDefinition, ColumnDefinition, IndexDefinition } from "@atomicbase/schema";
+import type { SchemaDefinition, TableDefinition, ColumnDefinition, IndexDefinition } from "@atomicbase/template";
 import type { AtomicbaseConfig } from "./config.js";
 
 // Re-export types from schema package (these match Go API types directly)
@@ -51,7 +51,10 @@ export interface Merge {
 
 // MigrateResponse is returned by the migrate endpoint (matches Go API)
 export interface MigrateResponse {
-  migrationId: number;
+  templateId: number;
+  currentVersion: number;
+  databasesTotal: number;
+  status: string;
 }
 
 // TemplateListItem matches Go API's Template (list response without schema)
@@ -94,9 +97,7 @@ export interface TemplateVersion {
 }
 
 // RollbackResponse is returned by the rollback endpoint (matches Go API)
-export interface RollbackResponse {
-  migrationId: number;
-}
+export type RollbackResponse = MigrateResponse;
 
 // Database represents a database record (matches Go API)
 export interface Database {
@@ -113,29 +114,6 @@ export interface Database {
 export interface SyncDatabaseResponse {
   fromVersion: number;
   toVersion: number;
-}
-
-// Migration represents a schema migration job (matches Go API's Migration)
-export interface Migration {
-  id: number;
-  templateId: number;
-  fromVersion: number;
-  toVersion: number;
-  sql: string[];
-  status: string;  // pending, running, paused, complete
-  state: string | null;  // null, success, partial, failed
-  totalDbs: number;
-  completedDbs: number;
-  failedDbs: number;
-  startedAt?: string;
-  completedAt?: string;
-  createdAt: string;
-}
-
-// RetryMigrationResponse is returned by the retry endpoint (matches Go API)
-export interface RetryMigrationResponse {
-  retriedCount: number;
-  migrationId: number;
 }
 
 export class ApiClient {
@@ -217,7 +195,7 @@ export class ApiClient {
 
   /**
    * Migrate an existing template to a new schema.
-   * Returns a job ID for tracking the async migration.
+   * Returns lazy migration summary information.
    */
   async migrateTemplate(
     name: string,
@@ -290,38 +268,12 @@ export class ApiClient {
 
   /**
    * Rollback a template to a previous version.
-   * Returns a job ID for tracking the async migration.
+   * Returns lazy migration summary information.
    */
   async rollbackTemplate(name: string, version: number): Promise<RollbackResponse> {
     return this.request<RollbackResponse>("POST", `/platform/templates/${name}/rollback`, {
       version,
     });
-  }
-
-  // =========================================================================
-  // Migration Management
-  // =========================================================================
-
-  /**
-   * List all migrations.
-   */
-  async listMigrations(status?: string): Promise<Migration[]> {
-    const query = status ? `?status=${status}` : "";
-    return this.request<Migration[]>("GET", `/platform/migrations${query}`);
-  }
-
-  /**
-   * Get migration status.
-   */
-  async getMigration(migrationId: number): Promise<Migration> {
-    return this.request<Migration>("GET", `/platform/migrations/${migrationId}`);
-  }
-
-  /**
-   * Retry failed tenants in a migration.
-   */
-  async retryMigration(migrationId: number): Promise<RetryMigrationResponse> {
-    return this.request<RetryMigrationResponse>("POST", `/platform/migrations/${migrationId}/retry`);
   }
 
   // =========================================================================

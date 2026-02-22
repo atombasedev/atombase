@@ -634,7 +634,7 @@ func CreateMigrationTx(ctx context.Context, exec Execer, templateID int32, fromV
 	result, err := exec.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (template_id, from_version, to_version, sql, status, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`, TableMigrations), templateID, fromVersion, toVersion, string(sqlJSON), MigrationStatusPending, now.Format(time.RFC3339))
+	`, TableMigrations), templateID, fromVersion, toVersion, string(sqlJSON), "ready", now.Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}
@@ -650,7 +650,7 @@ func CreateMigrationTx(ctx context.Context, exec Execer, templateID int32, fromV
 		FromVersion: fromVersion,
 		ToVersion:   toVersion,
 		SQL:         sqlStatements,
-		Status:      MigrationStatusPending,
+		Status:      "ready",
 		CreatedAt:   now,
 	}, nil
 }
@@ -663,19 +663,16 @@ func GetMigration(ctx context.Context, id int64) (*Migration, error) {
 	}
 
 	row := conn.QueryRowContext(ctx, fmt.Sprintf(`
-		SELECT id, template_id, from_version, to_version, sql, status, state,
-			   total_dbs, completed_dbs, failed_dbs, started_at, completed_at, created_at
+		SELECT id, template_id, from_version, to_version, sql, status, created_at
 		FROM %s WHERE id = ?
 	`, TableMigrations), id)
 
 	var m Migration
 	var sqlJSON string
-	var state sql.NullString
-	var startedAt, completedAt, createdAt sql.NullString
+	var createdAt sql.NullString
 
 	err = row.Scan(&m.ID, &m.TemplateID, &m.FromVersion, &m.ToVersion, &sqlJSON,
-		&m.Status, &state, &m.TotalDBs, &m.CompletedDBs, &m.FailedDBs,
-		&startedAt, &completedAt, &createdAt)
+		&m.Status, &createdAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrMigrationNotFound
@@ -687,17 +684,6 @@ func GetMigration(ctx context.Context, id int64) (*Migration, error) {
 		return nil, fmt.Errorf("failed to unmarshal SQL: %w", err)
 	}
 
-	if state.Valid {
-		m.State = &state.String
-	}
-	if startedAt.Valid {
-		t, _ := time.Parse(time.RFC3339, startedAt.String)
-		m.StartedAt = &t
-	}
-	if completedAt.Valid {
-		t, _ := time.Parse(time.RFC3339, completedAt.String)
-		m.CompletedAt = &t
-	}
 	if createdAt.Valid {
 		m.CreatedAt, _ = time.Parse(time.RFC3339, createdAt.String)
 	}
@@ -713,8 +699,7 @@ func ListMigrations(ctx context.Context, status string) ([]Migration, error) {
 	}
 
 	query := fmt.Sprintf(`
-		SELECT id, template_id, from_version, to_version, sql, status, state,
-			   total_dbs, completed_dbs, failed_dbs, started_at, completed_at, created_at
+		SELECT id, template_id, from_version, to_version, sql, status, created_at
 		FROM %s
 	`, TableMigrations)
 
@@ -735,12 +720,10 @@ func ListMigrations(ctx context.Context, status string) ([]Migration, error) {
 	for rows.Next() {
 		var m Migration
 		var sqlJSON string
-		var state sql.NullString
-		var startedAt, completedAt, createdAt sql.NullString
+		var createdAt sql.NullString
 
 		err = rows.Scan(&m.ID, &m.TemplateID, &m.FromVersion, &m.ToVersion, &sqlJSON,
-			&m.Status, &state, &m.TotalDBs, &m.CompletedDBs, &m.FailedDBs,
-			&startedAt, &completedAt, &createdAt)
+			&m.Status, &createdAt)
 		if err != nil {
 			return nil, err
 		}
@@ -749,17 +732,6 @@ func ListMigrations(ctx context.Context, status string) ([]Migration, error) {
 			return nil, fmt.Errorf("failed to unmarshal SQL: %w", err)
 		}
 
-		if state.Valid {
-			m.State = &state.String
-		}
-		if startedAt.Valid {
-			t, _ := time.Parse(time.RFC3339, startedAt.String)
-			m.StartedAt = &t
-		}
-		if completedAt.Valid {
-			t, _ := time.Parse(time.RFC3339, completedAt.String)
-			m.CompletedAt = &t
-		}
 		if createdAt.Valid {
 			m.CreatedAt, _ = time.Parse(time.RFC3339, createdAt.String)
 		}
@@ -781,21 +753,9 @@ func UpdateMigrationStatus(ctx context.Context, id int64, status string, state *
 		return err
 	}
 
-	var stateVal any = nil
-	if state != nil {
-		stateVal = *state
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	var completedAt any = nil
-	if status == MigrationStatusComplete {
-		completedAt = now
-	}
-
 	_, err = conn.ExecContext(ctx, fmt.Sprintf(`
-		UPDATE %s SET status = ?, state = ?, completed_dbs = ?, failed_dbs = ?, completed_at = ?
-		WHERE id = ?
-	`, TableMigrations), status, stateVal, completedDBs, failedDBs, completedAt, id)
+		UPDATE %s SET status = ? WHERE id = ?
+	`, TableMigrations), status, id)
 
 	return err
 }
@@ -807,11 +767,9 @@ func StartMigration(ctx context.Context, id int64, totalDBs int) error {
 		return err
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = conn.ExecContext(ctx, fmt.Sprintf(`
-		UPDATE %s SET status = ?, total_dbs = ?, started_at = ?
-		WHERE id = ?
-	`, TableMigrations), MigrationStatusRunning, totalDBs, now, id)
+		UPDATE %s SET status = ? WHERE id = ?
+	`, TableMigrations), MigrationStatusRunning, id)
 
 	return err
 }

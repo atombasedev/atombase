@@ -199,14 +199,6 @@ func DeleteDatabase(ctx context.Context, name string) error {
 		return fmt.Errorf("failed to delete turso database: %w", err)
 	}
 
-	// Delete database migration records
-	_, err = conn.ExecContext(ctx, fmt.Sprintf(`
-		DELETE FROM %s WHERE database_id = ?
-	`, TableDatabaseMigrations), tenantID)
-	if err != nil {
-		return err
-	}
-
 	// Delete database record
 	_, err = conn.ExecContext(ctx, fmt.Sprintf(`
 		DELETE FROM %s WHERE id = ?
@@ -289,22 +281,18 @@ func GetMigrationByVersions(ctx context.Context, templateID int32, fromVersion, 
 	}
 
 	row := conn.QueryRowContext(ctx, fmt.Sprintf(`
-		SELECT id, template_id, from_version, to_version, sql, status, state,
-			   total_dbs, completed_dbs, failed_dbs, started_at, completed_at, created_at
+		SELECT id, template_id, from_version, to_version, sql, status, created_at
 		FROM %s
 		WHERE template_id = ? AND from_version = ? AND to_version = ?
 	`, TableMigrations), templateID, fromVersion, toVersion)
 
 	var m Migration
 	var sqlJSON string
-	var state sql.NullString
-	var startedAt, completedAt sql.NullString
 	var createdAt string
 
 	if err := row.Scan(
 		&m.ID, &m.TemplateID, &m.FromVersion, &m.ToVersion, &sqlJSON,
-		&m.Status, &state, &m.TotalDBs, &m.CompletedDBs, &m.FailedDBs,
-		&startedAt, &completedAt, &createdAt,
+		&m.Status, &createdAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("migration not found")
@@ -316,18 +304,7 @@ func GetMigrationByVersions(ctx context.Context, templateID int32, fromVersion, 
 		return nil, fmt.Errorf("failed to decode migration SQL: %w", err)
 	}
 
-	if state.Valid {
-		m.State = &state.String
-	}
 	m.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-	if startedAt.Valid {
-		t, _ := time.Parse(time.RFC3339, startedAt.String)
-		m.StartedAt = &t
-	}
-	if completedAt.Valid {
-		t, _ := time.Parse(time.RFC3339, completedAt.String)
-		m.CompletedAt = &t
-	}
 
 	return &m, nil
 }
@@ -491,6 +468,11 @@ func BatchUpdateDatabaseVersions(ctx context.Context, tenantIDs []int32, version
 	`, TableDatabases, string(placeholders)), args...)
 
 	return err
+}
+
+// UpdateDatabaseVersion updates template_version for a single database.
+func UpdateDatabaseVersion(ctx context.Context, databaseID int32, version int) error {
+	return BatchUpdateDatabaseVersions(ctx, []int32{databaseID}, version)
 }
 
 // RecordDatabaseMigration records the outcome of a database migration.

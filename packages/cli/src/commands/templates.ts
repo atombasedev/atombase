@@ -5,7 +5,7 @@ import { resolve, dirname } from "node:path";
 import { loadConfig } from "../config.js";
 import { loadSchema, loadAllSchemas } from "../schema/parser.js";
 import { ApiClient, ApiError, type SchemaDiff, type Merge, type TemplateResponse } from "../api.js";
-import type { SchemaDefinition, ColumnDefinition, ForeignKeyAction, Collation } from "@atomicbase/schema";
+import type { SchemaDefinition, ColumnDefinition, ForeignKeyAction, Collation } from "@atomicbase/template";
 
 // =============================================================================
 // Shared Utilities
@@ -52,6 +52,93 @@ interface AmbiguousChange {
   addIndex: number;
 }
 
+interface DestructiveChange {
+  type: "drop_table" | "drop_column";
+  table: string;
+  column?: string;
+}
+
+interface IndexedSchemaDiff {
+  change: SchemaDiff;
+  index: number;
+}
+
+function getNameSimilarity(a: string, b: string): number {
+  const left = a.toLowerCase();
+  const right = b.toLowerCase();
+
+  if (left === right) return 1;
+  if (left.length < 2 || right.length < 2) return 0;
+
+  const leftBigrams = new Map<string, number>();
+  for (let i = 0; i < left.length - 1; i++) {
+    const gram = left.slice(i, i + 2);
+    leftBigrams.set(gram, (leftBigrams.get(gram) ?? 0) + 1);
+  }
+
+  let intersection = 0;
+  for (let i = 0; i < right.length - 1; i++) {
+    const gram = right.slice(i, i + 2);
+    const count = leftBigrams.get(gram) ?? 0;
+    if (count > 0) {
+      intersection++;
+      leftBigrams.set(gram, count - 1);
+    }
+  }
+
+  return (2 * intersection) / ((left.length - 1) + (right.length - 1));
+}
+
+function pairRenameCandidates(
+  drops: IndexedSchemaDiff[],
+  adds: IndexedSchemaDiff[],
+  pairType: "table" | "column"
+): AmbiguousChange[] {
+  if (drops.length === 0 || adds.length === 0) return [];
+
+  const candidates: Array<{ drop: IndexedSchemaDiff; add: IndexedSchemaDiff; score: number }> = [];
+  for (const drop of drops) {
+    for (const add of adds) {
+      const dropName = pairType === "table" ? drop.change.table : drop.change.column;
+      const addName = pairType === "table" ? add.change.table : add.change.column;
+      candidates.push({
+        drop,
+        add,
+        score: getNameSimilarity(dropName ?? "", addName ?? ""),
+      });
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+
+  const usedDrops = new Set<number>();
+  const usedAdds = new Set<number>();
+  const pairs: AmbiguousChange[] = [];
+
+  for (const candidate of candidates) {
+    if (usedDrops.has(candidate.drop.index) || usedAdds.has(candidate.add.index)) {
+      continue;
+    }
+
+		usedDrops.add(candidate.drop.index);
+		usedAdds.add(candidate.add.index);
+
+    pairs.push({
+      type: pairType,
+      table: (candidate.add.change.table ?? candidate.drop.change.table) ?? "",
+      column: candidate.add.change.column,
+      dropIndex: candidate.drop.index,
+      addIndex: candidate.add.index,
+    });
+
+    if (pairs.length === Math.min(drops.length, adds.length)) {
+      break;
+    }
+  }
+
+  return pairs;
+}
+
 /**
  * Detect ambiguous changes (drop + add pairs that might be renames).
  * This is client-side since the API just returns raw changes.
@@ -67,17 +154,7 @@ function detectAmbiguousChanges(changes: SchemaDiff[]): AmbiguousChange[] {
     .map((c, i) => ({ change: c, index: i }))
     .filter((c) => c.change.type === "add_table");
 
-  // Any drop + add table is potentially ambiguous (might be a rename)
-  for (const drop of dropTables) {
-    for (const add of addTables) {
-      ambiguous.push({
-        type: "table",
-        table: add.change.table!,
-        dropIndex: drop.index,
-        addIndex: add.index,
-      });
-    }
-  }
+  ambiguous.push(...pairRenameCandidates(dropTables, addTables, "table"));
 
   // Find drop_column + add_column pairs within the same table
   const dropColumns = changes
@@ -87,18 +164,26 @@ function detectAmbiguousChanges(changes: SchemaDiff[]): AmbiguousChange[] {
     .map((c, i) => ({ change: c, index: i }))
     .filter((c) => c.change.type === "add_column");
 
+  const dropsByTable = new Map<string, IndexedSchemaDiff[]>();
+  const addsByTable = new Map<string, IndexedSchemaDiff[]>();
+
   for (const drop of dropColumns) {
-    for (const add of addColumns) {
-      if (drop.change.table === add.change.table) {
-        ambiguous.push({
-          type: "column",
-          table: add.change.table!,
-          column: add.change.column,
-          dropIndex: drop.index,
-          addIndex: add.index,
-        });
-      }
-    }
+    const table = drop.change.table ?? "";
+    const existing = dropsByTable.get(table) ?? [];
+    existing.push(drop);
+    dropsByTable.set(table, existing);
+  }
+
+  for (const add of addColumns) {
+    const table = add.change.table ?? "";
+    const existing = addsByTable.get(table) ?? [];
+    existing.push(add);
+    addsByTable.set(table, existing);
+  }
+
+  for (const [table, drops] of dropsByTable.entries()) {
+    const adds = addsByTable.get(table) ?? [];
+    ambiguous.push(...pairRenameCandidates(drops, adds, "column"));
   }
 
   return ambiguous;
@@ -143,6 +228,24 @@ async function resolveAmbiguousChanges(
 
   console.log("");
   return merges;
+}
+
+function getUnmergedDestructiveChanges(changes: SchemaDiff[], merges?: Merge[]): DestructiveChange[] {
+  const mergedDropIndexes = new Set((merges ?? []).map((m) => m.old));
+  const destructive: DestructiveChange[] = [];
+
+  for (let i = 0; i < changes.length; i++) {
+    const change = changes[i];
+    if ((change.type === "drop_table" || change.type === "drop_column") && !mergedDropIndexes.has(i)) {
+      destructive.push({
+        type: change.type,
+        table: change.table ?? "",
+        column: change.column,
+      });
+    }
+  }
+
+  return destructive;
 }
 
 /**
@@ -216,10 +319,29 @@ async function pushSingleSchema(api: ApiClient, schema: SchemaDefinition): Promi
     }
   }
 
+  const destructiveChanges = getUnmergedDestructiveChanges(diff.changes, merges);
+  if (destructiveChanges.length > 0) {
+    console.log("\nWarning: This migration will delete existing data:");
+    for (const change of destructiveChanges) {
+      if (change.type === "drop_table") {
+        console.log(`  - Drop table: ${change.table}`);
+      } else {
+        console.log(`  - Drop column: ${change.table}.${change.column}`);
+      }
+    }
+
+    const confirmed = await confirm("Continue with this destructive migration?");
+    if (!confirmed) {
+      console.log("Aborted.");
+      process.exit(0);
+    }
+    console.log("");
+  }
+
   // Apply the migration
   const result = await api.migrateTemplate(schema.name, schema, merges);
-  console.log(`Migration started (migration #${result.migrationId})`);
-  console.log(`  Check status: atomicbase migrations ${result.migrationId}`);
+  console.log(`Template "${schema.name}" updated to v${result.currentVersion}`);
+  console.log(`  Status: ${result.status}`);
 }
 
 // =============================================================================
@@ -292,7 +414,7 @@ function convertFromApiFormat(tables: TemplateResponse["schema"]["tables"]): Gen
  */
 function generateSchemaCode(name: string, tables: GeneratorTable[]): string {
   const lines: string[] = [
-    `import { defineSchema, defineTable, c } from "@atomicbase/schema";`,
+    `import { defineSchema, defineTable, c } from "@atomicbase/template";`,
     ``,
     `export default defineSchema("${name}", {`,
   ];
@@ -587,8 +709,11 @@ async function rollbackTemplate(name: string, version: string, force: boolean): 
 
   try {
     const result = await api.rollbackTemplate(name, targetVersion);
-    console.log(`Rollback initiated. Migration ID: ${result.migrationId}`);
-    console.log(`\nTrack progress with: atomicbase migrations ${result.migrationId}`);
+    console.log(
+      `Rollback applied: schema from v${targetVersion} is now published as new version v${result.currentVersion}`
+    );
+    console.log(`Template "${name}" updated to v${result.currentVersion}`);
+    console.log(`  Status: ${result.status}`);
   } catch (err) {
     if (err instanceof ApiError && err.code === "NO_CHANGES") {
       console.log("No schema changes needed for this rollback.");

@@ -4,7 +4,6 @@ import { Command } from "commander";
 import { initCommand } from "./commands/init.js";
 import { templatesCommand } from "./commands/templates.js";
 import { databasesCommand } from "./commands/databases.js";
-import { migrationsCommand } from "./commands/migrations.js";
 
 // Load environment variables from .env file in the user's working directory
 // INIT_CWD is set by npm/npx to the original directory where the command was run
@@ -38,6 +37,5 @@ program
 program.addCommand(initCommand);
 program.addCommand(templatesCommand);
 program.addCommand(databasesCommand);
-program.addCommand(migrationsCommand);
 
 program.parse();

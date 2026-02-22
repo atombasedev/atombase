@@ -121,7 +121,7 @@ Define schemas in the `schemas/` directory:
 
 ```typescript
 // schemas/my-app.schema.ts
-import { defineSchema, defineTable, c } from "@atomicbase/schema";
+import { defineSchema, defineTable, c } from "@atomicbase/template";
 
 export default defineSchema("my-app", {
   users: defineTable({
@@ -139,7 +139,7 @@ export default defineSchema("my-app", {
 2. Preview changes: `npx atomicbase templates diff`
 3. Push to server: `npx atomicbase templates push`
 4. Create databases: `npx atomicbase databases create acme --template my-app`
-5. Track migrations: `npx atomicbase jobs`
+5. Requests to older databases migrate lazily on first access
 
 ## Options
 

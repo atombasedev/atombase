@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
 import { createJiti } from "jiti";
-import type { SchemaDefinition } from "@atomicbase/schema";
+import type { SchemaDefinition } from "@atomicbase/template";
 
 // Create jiti instance for loading TypeScript schema files
 const jiti = createJiti(import.meta.url);

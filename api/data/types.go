@@ -14,11 +14,12 @@ type PrimaryDao struct {
 
 // Database represents a connection to a SQLite/Turso database with cached schema.
 type Database struct {
-	Client        *sql.DB     // SQL database connection
-	Schema        SchemaCache // Cached schema for validation
-	ID            int32       // Internal database ID (1 = primary)
-	TemplateID    int32       // Template ID (0 for primary database)
-	SchemaVersion int         // Template version from template history (stored in template_version column)
+	Client          *sql.DB     // SQL database connection
+	Schema          SchemaCache // Cached schema for validation
+	ID              int32       // Internal database ID (1 = primary)
+	TemplateID      int32       // Template ID (0 for primary database)
+	SchemaVersion   int         // Current template version from schema cache
+	DatabaseVersion int         // Database's applied template_version
 }
 
 // SchemaCache holds cached table and foreign key information for query validation.

@@ -465,7 +465,6 @@ func RetryFailedDatabases(ctx context.Context, jobID int64) (*RetryMigrationResp
 	if len(failedTenants) == 0 {
 		return &RetryMigrationResponse{
 			RetriedCount: 0,
-			MigrationID:  jobID,
 		}, nil
 	}
 
@@ -496,7 +495,6 @@ func RetryFailedDatabases(ctx context.Context, jobID int64) (*RetryMigrationResp
 
 	return &RetryMigrationResponse{
 		RetriedCount: len(failedTenants),
-		MigrationID:  jobID,
 	}, nil
 }
 

@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/atomicbase/atomicbase/config"
 	"github.com/atomicbase/atomicbase/data"
@@ -53,6 +52,7 @@ func logStartupInfo() {
 }
 
 func main() {
+
 	logStartupInfo()
 
 	// Initialize activity logger if enabled
@@ -70,11 +70,6 @@ func main() {
 	// Register routes from each module
 	data.RegisterRoutes(app)
 	platform.RegisterRoutes(app)
-
-	// Resume any interrupted migration jobs from previous run
-	if err := platform.ResumeRunningJobs(context.Background()); err != nil {
-		log.Printf("Warning: failed to resume running jobs: %v", err)
-	}
 
 	// Apply middleware chain: panic recovery -> logging -> timeout -> cors -> auth -> handler
 	handler := tools.PanicRecoveryMiddleware(
@@ -103,16 +98,9 @@ func main() {
 
 	fmt.Println("\nShutting down server...")
 
-	// Give outstanding requests 10 seconds to complete
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(context.Background()); err != nil {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
-
-	// Wait for background migration jobs to complete
-	platform.GetJobManager().Wait()
 
 	// Close database connections
 	if err := data.ClosePrimaryDB(); err != nil {

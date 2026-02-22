@@ -1,4 +1,4 @@
-import { defineSchema, defineTable, c } from "@atomicbase/schema";
+import { defineSchema, defineTable, c } from "@atomicbase/template";
 
 export default defineSchema("my-app", {
   users: defineTable({

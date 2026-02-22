@@ -18,6 +18,7 @@ const (
 	TableDatabases          = "atomicbase_databases"
 	TableMigrations         = "atomicbase_migrations"
 	TableDatabaseMigrations = "atomicbase_database_migrations"
+	TableMigrationFailures  = "atomicbase_migration_failures"
 )
 
 // Primary database connection for platform operations.
@@ -52,40 +53,32 @@ func InitDB() error {
 	// Create migrations table if it doesn't exist
 	_, err = conn.Exec(`
 		CREATE TABLE IF NOT EXISTS ` + TableMigrations + ` (
-			id INTEGER PRIMARY KEY,
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			template_id INTEGER NOT NULL REFERENCES ` + TableTemplates + `(id),
 			from_version INTEGER NOT NULL,
 			to_version INTEGER NOT NULL,
 			sql TEXT NOT NULL,
-			status TEXT NOT NULL DEFAULT 'pending',
-			state TEXT,
-			total_dbs INTEGER NOT NULL DEFAULT 0,
-			completed_dbs INTEGER NOT NULL DEFAULT 0,
-			failed_dbs INTEGER NOT NULL DEFAULT 0,
-			started_at TEXT,
-			completed_at TEXT,
+			status TEXT NOT NULL DEFAULT 'ready',
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_migrations_template ON ` + TableMigrations + `(template_id);
-		CREATE INDEX IF NOT EXISTS idx_migrations_status ON ` + TableMigrations + `(status);
+		CREATE INDEX IF NOT EXISTS idx_migrations_versions ON ` + TableMigrations + `(template_id, from_version, to_version);
 	`)
 	if err != nil {
 		conn.Close()
 		return err
 	}
 
-	// Create tenant_migrations table if it doesn't exist
+	// Create migration failures table for debugging lazy migrations.
 	_, err = conn.Exec(`
-		CREATE TABLE IF NOT EXISTS ` + TableDatabaseMigrations + ` (
-			migration_id INTEGER NOT NULL REFERENCES ` + TableMigrations + `(id),
-			database_id INTEGER NOT NULL REFERENCES ` + TableDatabases + `(id),
-			status TEXT NOT NULL,
+		CREATE TABLE IF NOT EXISTS ` + TableMigrationFailures + ` (
+			database_id INTEGER PRIMARY KEY REFERENCES ` + TableDatabases + `(id),
+			from_version INTEGER NOT NULL,
+			to_version INTEGER NOT NULL,
 			error TEXT,
-			attempts INTEGER NOT NULL DEFAULT 1,
-			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (migration_id, database_id)
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
-		CREATE INDEX IF NOT EXISTS idx_database_migrations_status ON ` + TableDatabaseMigrations + `(status);
+		CREATE INDEX IF NOT EXISTS idx_migration_failures_created_at ON ` + TableMigrationFailures + `(created_at);
 	`)
 	if err != nil {
 		conn.Close()

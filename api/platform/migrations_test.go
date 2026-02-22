@@ -818,8 +818,8 @@ func TestCreateMigration(t *testing.T) {
 	if migration.FromVersion != 1 || migration.ToVersion != 2 {
 		t.Errorf("versions = %d->%d, want 1->2", migration.FromVersion, migration.ToVersion)
 	}
-	if migration.Status != MigrationStatusPending {
-		t.Errorf("status = %s, want pending", migration.Status)
+	if migration.Status != "ready" {
+		t.Errorf("status = %s, want ready", migration.Status)
 	}
 	if len(migration.SQL) != 1 {
 		t.Errorf("sql count = %d, want 1", len(migration.SQL))
@@ -851,8 +851,8 @@ func TestGetMigration(t *testing.T) {
 	if migration.ID != created.ID {
 		t.Errorf("id = %d, want %d", migration.ID, created.ID)
 	}
-	if migration.Status != MigrationStatusPending {
-		t.Errorf("status = %s, want pending", migration.Status)
+	if migration.Status != "ready" {
+		t.Errorf("status = %s, want ready", migration.Status)
 	}
 }
 
@@ -899,14 +899,8 @@ func TestUpdateMigrationStatus(t *testing.T) {
 	if updated.Status != MigrationStatusComplete {
 		t.Errorf("status = %s, want complete", updated.Status)
 	}
-	if updated.State == nil || *updated.State != MigrationStateSuccess {
-		t.Errorf("state = %v, want success", updated.State)
-	}
-	if updated.CompletedDBs != 10 {
-		t.Errorf("completedDbs = %d, want 10", updated.CompletedDBs)
-	}
-	if updated.CompletedAt == nil {
-		t.Error("completedAt should be set")
+	if updated.State != nil {
+		t.Errorf("state = %v, want nil", updated.State)
 	}
 }
 
@@ -941,10 +935,7 @@ func TestStartMigration(t *testing.T) {
 	if started.Status != MigrationStatusRunning {
 		t.Errorf("status = %s, want running", started.Status)
 	}
-	if started.TotalDBs != 25 {
-		t.Errorf("totalDbs = %d, want 25", started.TotalDBs)
-	}
-	if started.StartedAt == nil {
-		t.Error("startedAt should be set")
+	if started.TotalDBs != 0 {
+		t.Errorf("totalDbs = %d, want 0", started.TotalDBs)
 	}
 }

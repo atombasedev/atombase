@@ -52,6 +52,11 @@ func withDB(handler DbHandler) http.HandlerFunc {
 			defer dao.Client.Close()
 		}
 
+		if err := MigrateIfNeeded(ctx, &dao); err != nil {
+			respondMigrationFailed(wr, err)
+			return
+		}
+
 		data, err := handler(ctx, &dao, req)
 		if err != nil {
 			tools.RespErr(wr, err)
@@ -80,6 +85,11 @@ func withDBResponse(handler DbResponseHandler) http.HandlerFunc {
 		// Only close external (non-pooled) connections
 		if isExternal {
 			defer dao.Client.Close()
+		}
+
+		if err := MigrateIfNeeded(ctx, &dao); err != nil {
+			respondMigrationFailed(wr, err)
+			return
 		}
 
 		data, err := handler(ctx, &dao, req, wr)
@@ -282,4 +292,14 @@ func parsePreferHeaders(req *http.Request) (operation string, onConflict string,
 	}
 
 	return operation, onConflict, countExact
+}
+
+func respondMigrationFailed(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(tools.APIError{
+		Code:    "MIGRATION_FAILED",
+		Message: "Database migration failed. Please try again.",
+		Hint:    "If this persists, contact support. Error: " + err.Error(),
+	})
 }

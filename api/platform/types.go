@@ -103,16 +103,6 @@ const (
 	MigrationStateFailed  = "failed"
 )
 
-// DatabaseMigration tracks per-database migration outcome.
-type DatabaseMigration struct {
-	MigrationID int64     `json:"migrationId"`
-	DatabaseID  int32     `json:"databaseId"`
-	Status      string    `json:"status"` // success, failed
-	Error       string    `json:"error,omitempty"`
-	Attempts    int       `json:"attempts"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-}
-
 // DatabaseMigration status constants.
 const (
 	DatabaseMigrationStatusSuccess = "success"
@@ -184,7 +174,10 @@ type MigrateRequest struct {
 
 // MigrateResponse is the response for POST /platform/templates/{name}/migrate.
 type MigrateResponse struct {
-	MigrationID int64 `json:"migrationId"`
+	TemplateID     int32  `json:"templateId,omitempty"`
+	CurrentVersion int    `json:"currentVersion,omitempty"`
+	DatabasesTotal int    `json:"databasesTotal,omitempty"`
+	Status         string `json:"status,omitempty"`
 }
 
 // RollbackRequest is the request body for POST /platform/templates/{name}/rollback.
@@ -193,8 +186,12 @@ type RollbackRequest struct {
 }
 
 // RollbackResponse is the response for POST /platform/templates/{name}/rollback.
-type RollbackResponse struct {
-	MigrationID int64 `json:"migrationId"`
+type RollbackResponse = MigrateResponse
+
+// RetryMigrationResponse is retained for internal compatibility.
+// Migration endpoints are deprecated and not exposed.
+type RetryMigrationResponse struct {
+	RetriedCount int `json:"retriedCount"`
 }
 
 // CreateDatabaseRequest is the request body for POST /platform/databases.
@@ -207,10 +204,4 @@ type CreateDatabaseRequest struct {
 type SyncDatabaseResponse struct {
 	FromVersion int `json:"fromVersion"`
 	ToVersion   int `json:"toVersion"`
-}
-
-// RetryMigrationResponse is the response for POST /platform/migrations/{id}/retry.
-type RetryMigrationResponse struct {
-	RetriedCount int   `json:"retriedCount"`
-	MigrationID  int64 `json:"migrationId"`
 }

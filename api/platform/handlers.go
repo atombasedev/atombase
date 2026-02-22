@@ -1,12 +1,12 @@
 package platform
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/atomicbase/atomicbase/config"
@@ -64,10 +64,6 @@ func RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /platform/databases/{name}", handleDeleteDatabase)
 	mux.HandleFunc("POST /platform/databases/{name}/sync", handleSyncDatabase)
 
-	// Migrations
-	mux.HandleFunc("GET /platform/migrations", handleListMigrations)
-	mux.HandleFunc("GET /platform/migrations/{id}", handleGetMigration)
-	mux.HandleFunc("POST /platform/migrations/{id}/retry", handleRetryMigration)
 }
 
 // =============================================================================
@@ -184,36 +180,24 @@ func handleMigrateTemplate(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	// Get current template
 	template, err := GetTemplate(ctx, name)
 	if err != nil {
 		tools.RespErr(w, err)
 		return
 	}
 
-	// Check for concurrent migration
-	jm := GetJobManager()
-	if jm.IsRunning(template.ID) {
-		tools.RespErr(w, tools.ErrAtomicbaseBusy)
-		return
-	}
-
-	// Diff schemas
 	changes := diffSchemas(template.Schema, req.Schema)
 	if len(changes) == 0 {
 		tools.RespErr(w, tools.ErrNoChanges)
 		return
 	}
 
-	// Generate migration plan
 	plan, err := GenerateMigrationPlan(template.Schema, req.Schema, changes, req.Merge)
 	if err != nil {
 		tools.RespErr(w, tools.InvalidMigrationErr(err.Error()))
 		return
 	}
 
-	// Validate migration
-	// Get first database for migration validation (if any exist)
 	databases, err := GetDatabasesByTemplate(ctx, template.ID)
 	if err != nil {
 		tools.RespErr(w, err)
@@ -228,7 +212,6 @@ func handleMigrateTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !validationResult.Valid {
-		// Join validation errors into a single message for standard format
 		errMsg := validationResult.Errors[0].Message
 		if len(validationResult.Errors) > 1 {
 			errMsg = fmt.Sprintf("%d errors: %s", len(validationResult.Errors), errMsg)
@@ -237,7 +220,6 @@ func handleMigrateTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create new version in history
 	newVersion := template.CurrentVersion + 1
 	schemaJSON, err := encodeSchemaForStorage(req.Schema)
 	if err != nil {
@@ -255,59 +237,25 @@ func handleMigrateTemplate(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	// If no databases, use a transaction to atomically create version, history, and migration record
-	if len(databases) == 0 {
-		tx, err := conn.BeginTx(ctx, nil)
+	if len(databases) > 0 {
+		execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		err := BatchExecute(execCtx, databases[0].Name, plan.SQL)
+		cancel()
 		if err != nil {
-			tools.RespErr(w, err)
-			return
-		}
-		defer tx.Rollback()
-
-		// Insert history record
-		_, err = tx.ExecContext(ctx, fmt.Sprintf(`
-			INSERT INTO %s (template_id, version, schema, checksum, created_at)
-			VALUES (?, ?, ?, ?, ?)
-		`, TableTemplatesHistory), template.ID, newVersion, schemaJSON, checksum, now)
-		if err != nil {
-			tools.RespErr(w, err)
+			respondJSON(w, http.StatusBadRequest, tools.APIError{
+				Code:    "MIGRATION_FAILED",
+				Message: fmt.Sprintf("Migration failed on test database '%s': %v", databases[0].Name, err),
+				Hint:    "Fix the schema and try again. No databases were modified.",
+			})
 			return
 		}
 
-		// Update template version
-		_, err = tx.ExecContext(ctx, fmt.Sprintf(`
-			UPDATE %s SET current_version = ?, updated_at = ? WHERE id = ?
-		`, TableTemplates), newVersion, now, template.ID)
-		if err != nil {
+		if err := UpdateDatabaseVersion(ctx, databases[0].ID, newVersion); err != nil {
 			tools.RespErr(w, err)
 			return
 		}
-
-		// Create migration record within transaction
-		migration, err := CreateMigrationTx(ctx, tx, template.ID, template.CurrentVersion, newVersion, plan.SQL)
-		if err != nil {
-			tools.RespErr(w, err)
-			return
-		}
-
-		// Commit transaction
-		if err := tx.Commit(); err != nil {
-			tools.RespErr(w, err)
-			return
-		}
-
-		// Invalidate schema cache so next request loads the new version
-		tools.InvalidateTemplate(template.ID)
-
-		// Update migration status (outside transaction, non-critical)
-		state := MigrationStateSuccess
-		_ = UpdateMigrationStatus(ctx, migration.ID, MigrationStatusComplete, &state, 0, 0)
-
-		respondJSON(w, http.StatusAccepted, MigrateResponse{MigrationID: migration.ID})
-		return
 	}
 
-	// With databases: use transaction for history and migration record, then start background job
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		tools.RespErr(w, err)
@@ -324,8 +272,24 @@ func handleMigrateTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create migration record within transaction
-	migration, err := CreateMigrationTx(ctx, tx, template.ID, template.CurrentVersion, newVersion, plan.SQL)
+	migrationSQL, err := json.Marshal(plan.SQL)
+	if err != nil {
+		tools.RespErr(w, err)
+		return
+	}
+
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO %s (template_id, from_version, to_version, sql, status, created_at)
+		VALUES (?, ?, ?, ?, 'ready', ?)
+	`, TableMigrations), template.ID, template.CurrentVersion, newVersion, string(migrationSQL), now)
+	if err != nil {
+		tools.RespErr(w, err)
+		return
+	}
+
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
+		UPDATE %s SET current_version = ?, updated_at = ? WHERE id = ?
+	`, TableTemplates), newVersion, now, template.ID)
 	if err != nil {
 		tools.RespErr(w, err)
 		return
@@ -336,10 +300,14 @@ func handleMigrateTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start background migration job
-	RunMigrationJob(ctx, migration.ID)
+	tools.InvalidateTemplate(template.ID)
 
-	respondJSON(w, http.StatusAccepted, MigrateResponse{MigrationID: migration.ID})
+	respondJSON(w, http.StatusOK, MigrateResponse{
+		TemplateID:     template.ID,
+		CurrentVersion: newVersion,
+		DatabasesTotal: len(databases),
+		Status:         "ready",
+	})
 }
 
 func handleRollbackTemplate(w http.ResponseWriter, r *http.Request) {
@@ -371,13 +339,6 @@ func handleRollbackTemplate(w http.ResponseWriter, r *http.Request) {
 
 	if req.Version >= template.CurrentVersion {
 		tools.RespErr(w, tools.InvalidRequestErr(fmt.Sprintf("rollback version must be less than current version %d", template.CurrentVersion)))
-		return
-	}
-
-	// Check for concurrent migration
-	jm := GetJobManager()
-	if jm.IsRunning(template.ID) {
-		tools.RespErr(w, tools.ErrAtomicbaseBusy)
 		return
 	}
 
@@ -415,7 +376,40 @@ func handleRollbackTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = conn.ExecContext(ctx, fmt.Sprintf(`
+
+	databases, err := GetDatabasesByTemplate(ctx, template.ID)
+	if err != nil {
+		tools.RespErr(w, err)
+		return
+	}
+
+	if len(databases) > 0 {
+		execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		err := BatchExecute(execCtx, databases[0].Name, plan.SQL)
+		cancel()
+		if err != nil {
+			respondJSON(w, http.StatusBadRequest, tools.APIError{
+				Code:    "MIGRATION_FAILED",
+				Message: fmt.Sprintf("Rollback failed on test database '%s': %v", databases[0].Name, err),
+				Hint:    "Fix the schema and try again. No databases were modified.",
+			})
+			return
+		}
+
+		if err := UpdateDatabaseVersion(ctx, databases[0].ID, newVersion); err != nil {
+			tools.RespErr(w, err)
+			return
+		}
+	}
+
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		tools.RespErr(w, err)
+		return
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (template_id, version, schema, checksum, created_at)
 		VALUES (?, ?, ?, ?, ?)
 	`, TableTemplatesHistory), template.ID, newVersion, schemaJSON, checksum, now)
@@ -424,17 +418,42 @@ func handleRollbackTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create migration record
-	migration, err := CreateMigration(ctx, template.ID, template.CurrentVersion, newVersion, plan.SQL)
+	migrationSQL, err := json.Marshal(plan.SQL)
 	if err != nil {
 		tools.RespErr(w, err)
 		return
 	}
 
-	// Start background migration job
-	RunMigrationJob(ctx, migration.ID)
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO %s (template_id, from_version, to_version, sql, status, created_at)
+		VALUES (?, ?, ?, ?, 'ready', ?)
+	`, TableMigrations), template.ID, template.CurrentVersion, newVersion, string(migrationSQL), now)
+	if err != nil {
+		tools.RespErr(w, err)
+		return
+	}
 
-	respondJSON(w, http.StatusAccepted, RollbackResponse{MigrationID: migration.ID})
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
+		UPDATE %s SET current_version = ?, updated_at = ? WHERE id = ?
+	`, TableTemplates), newVersion, now, template.ID)
+	if err != nil {
+		tools.RespErr(w, err)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		tools.RespErr(w, err)
+		return
+	}
+
+	tools.InvalidateTemplate(template.ID)
+
+	respondJSON(w, http.StatusOK, RollbackResponse{
+		TemplateID:     template.ID,
+		CurrentVersion: newVersion,
+		DatabasesTotal: len(databases),
+		Status:         "ready",
+	})
 }
 
 func handleGetTemplateHistory(w http.ResponseWriter, r *http.Request) {
@@ -538,67 +557,6 @@ func handleSyncDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := SyncDatabase(r.Context(), name)
-	if err != nil {
-		tools.RespErr(w, err)
-		return
-	}
-
-	respondJSON(w, http.StatusOK, result)
-}
-
-// =============================================================================
-// Migration Handlers
-// =============================================================================
-
-func handleListMigrations(w http.ResponseWriter, r *http.Request) {
-	// Optional status filter
-	status := r.URL.Query().Get("status")
-
-	migrations, err := ListMigrations(r.Context(), status)
-	if err != nil {
-		tools.RespErr(w, err)
-		return
-	}
-
-	respondJSON(w, http.StatusOK, migrations)
-}
-
-func handleGetMigration(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	if idStr == "" {
-		tools.RespErr(w, tools.InvalidRequestErr("migration id is required"))
-		return
-	}
-
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		tools.RespErr(w, tools.InvalidRequestErr("invalid migration id"))
-		return
-	}
-
-	migration, err := GetMigration(r.Context(), id)
-	if err != nil {
-		tools.RespErr(w, err)
-		return
-	}
-
-	respondJSON(w, http.StatusOK, migration)
-}
-
-func handleRetryMigration(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	if idStr == "" {
-		tools.RespErr(w, tools.InvalidRequestErr("migration id is required"))
-		return
-	}
-
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		tools.RespErr(w, tools.InvalidRequestErr("invalid migration id"))
-		return
-	}
-
-	result, err := RetryFailedDatabases(r.Context(), id)
 	if err != nil {
 		tools.RespErr(w, err)
 		return
