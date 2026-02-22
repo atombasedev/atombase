@@ -6,7 +6,7 @@
 //
 // Example:
 // ```typescript
-// import { defineSchema, defineTable, c } from "@atomicbase/schema";
+// import { defineSchema, defineTable, c } from "@atomicbase/template";
 //
 // export default defineSchema("user-app", {
 //   users: defineTable({

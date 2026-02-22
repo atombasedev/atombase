@@ -1,7 +1,7 @@
 {
-  "name": "@atomicbase/schema",
+  "name": "@atomicbase/template",
   "version": "0.1.0",
-  "description": "TypeScript schema definitions for Atomicbase",
+  "description": "TypeScript template definitions for Atomicbase",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -23,6 +23,7 @@
   },
   "keywords": [
     "atomicbase",
+    "template",
     "schema",
     "sqlite",
     "database"

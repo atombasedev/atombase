@@ -19,7 +19,7 @@ At its core, Atomicbase was built to make multi-database systems more predictabl
 | TypeScript SDK   | Alpha        |
 | Platform API     | Experimental |
 | Schema Templates | Experimental |
-| Schema Package   | Alpha        |
+| Template Package | Alpha        |
 | CLI              | Alpha        |
 | Authentication   | In progress  |
 | AI               | In progress  |
@@ -80,7 +80,7 @@ Server runs at `http://localhost:8080` by default.
 ### 3. Install Packages
 
 ```bash
-npm install @atomicbase/sdk @atomicbase/schema
+npm install @atomicbase/sdk @atomicbase/template
 ```
 
 ### 4. Initialize Config
@@ -95,7 +95,7 @@ Creates `atomicbase.config.ts` file & schemas folder
 
 ```typescript
 // schemas/my-app.schema.ts
-import { defineSchema, defineTable, c } from "@atomicbase/schema";
+import { defineSchema, defineTable, c } from "@atomicbase/template";
 
 export default defineSchema("my-app", {
   users: defineTable({

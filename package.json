@@ -5,9 +5,9 @@
     "build": "pnpm -r build",
     "test:contract:sdk": "pnpm --filter @atomicbase/sdk test:contract",
     "build:sdk": "pnpm --filter @atomicbase/sdk build",
-    "build:schema": "pnpm --filter @atomicbase/schema build",
+    "build:template": "pnpm --filter @atomicbase/template build",
     "build:cli": "pnpm --filter @atomicbase/cli build",
-    "build:react-todo": "pnpm --filter @atomicbase/sdk build && pnpm --filter @atomicbase/schema build && pnpm --filter react-todo build",
+    "build:react-todo": "pnpm --filter @atomicbase/sdk build && pnpm --filter @atomicbase/template build && pnpm --filter react-todo build",
     "dev:sdk": "pnpm --filter @atomicbase/sdk dev",
     "dev:react-todo": "pnpm --filter react-todo dev"
   }
