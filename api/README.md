@@ -7,7 +7,7 @@ The Go backend server for Atomicbase. A multi-database REST API built on SQLite 
 The Atomicbase API provides two main interfaces:
 
 - **Data API** (`/data/*`) - CRUD operations, batch transactions, and schema introspection for target databases
-- **Platform API** (`/platform/*`) - Database management including templates, databases, migrations, and jobs
+- **Platform API** (`/platform/*`) - Database and template management
 
 The server is packaged as a single Go executable with SQLite embedded. For multi-database deployments, it integrates with Turso for remote database hosting.
 
@@ -262,21 +262,6 @@ POST /platform/databases/{name}/sync
 DELETE /platform/databases/{name}
 ```
 
-#### Migrations
-
-Track and manage background migrations.
-
-```bash
-# List migrations (optionally filter by status)
-GET /platform/migrations?status=running
-
-# Get migration details
-GET /platform/migrations/{id}
-
-# Retry failed database migrations
-POST /platform/migrations/{id}/retry
-```
-
 ### Other Endpoints
 
 ```bash
@@ -360,8 +345,7 @@ api/
 │   ├── handlers.go      # HTTP route handlers
 │   ├── templates.go     # Template CRUD
 │   ├── databases.go     # Database management
-│   ├── migrations.go    # Schema migration planning
-│   └── jobs.go          # Background migration jobs
+│   └── migrations.go    # Schema migration planning
 └── tools/               # Shared utilities
     ├── middleware.go    # Auth, CORS, rate limit, logging, timeout
     ├── errors.go        # Error codes and types
@@ -418,12 +402,12 @@ Requests flow through middleware in this order:
 
 - **Simple deployment**: Single binary with embedded SQLite, no external dependencies
 - **Database-per-customer isolation**: Each customer gets a separate database with complete isolation
-- **Schema versioning**: Templates with version history, migrations, and rollback
+- **Schema versioning**: Templates with version history and rollback
 - **Flexible queries**: Complex filtering, joins, pagination, and full-text search
 - **Atomic operations**: Batch transactions with all-or-nothing execution
 - **Low latency**: Schema caching and connection pooling
 - **Turso integration**: Scale to thousands of databases with remote hosting
-- **Background migrations**: Non-blocking schema updates with job tracking
+- **Lazy migrations**: Databases migrate on first request after a template change
 
 ## Limitations
 
