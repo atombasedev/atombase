@@ -1,21 +1,26 @@
 # AtomBase
 
-**Manage a million databases like it's one.**
+**Launch your SaaS without rebuilding the backend.**
 
-AtomBase is the Turso development platform, packaged as a single Go executable.
+AtomBase is the SaaS-native backend for a database-per-tenant architecture, built on distributed SQLite.
 
 > [!CAUTION]
-> **AtomBase is currently a prototype and is not complete.**
-> This project is still under active development, has unfinished components, and is not production-ready.
+> **Prototype software - not complete.**
+> AtomBase is still under active development and is not production-ready. Expect missing features, API changes, and rough edges.
 
-## Philosophy
+## What is AtomBase?
 
-At its core, AtomBase was built to make multi-database systems more predictable and reliable. There are a lot of moving parts in a multi-database system. And in situations where this architecture is used, high security and reliability are the top priorities. One small mistake can cause a database to go out of sync, corrupt, or be vulnerable to attacks. Every design choice was made with security and reliability first. We're not just building a reliable platform. We're creating a platform that makes building reliable applications on top of it feel easy.
+AtomBase helps you run one database per tenant while still feeling like you are working with a single backend.
 
-> [!WARNING]
-> **AtomBase is in experimental preview.** There are many known and unknown bugs. APIs are likely to change.
+- **Databases Everywhere**: spin up a database per tenant in seconds.
+- **Definitions**: define schemas and access patterns in code.
+- **Data APIs**: query tenant databases securely over HTTP.
+- **Templates**: keep tenant schemas in sync through managed migrations.
+- **Authentication**: in progress.
+- **Storage**: coming soon.
+- **AI**: coming soon.
 
-## Status
+## Prototype Status
 
 | Component        | Status       |
 | ---------------- | ------------ |
@@ -31,33 +36,7 @@ At its core, AtomBase was built to make multi-database systems more predictable 
 | Realtime         | Planned      |
 | Dashboard        | Planned      |
 
-The current build should be treated as a working prototype: core flows exist, but feature coverage, hardening, and long-term API stability are still in progress.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                           AtomBase                                          │
-├─────────────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                             │
-│     ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
-│     │    Auth     ├──┤    Data     ├──┤  Platform   ├──┤     AI      ├──┤   Storage   │     │
-│     │             ├──┤             ├──┤             ├──┤             ├──┤             │     │
-│     │ • Users     ├──┤ • Queries   ├──┤ • Databases ├──┤ • Models    ├──┤ • Uploads   │     │
-│     │ • Orgs      ├──┤ • Validation├──┤ • Templates ├──┤ • Context   ├──┤ • Transforms│     │
-│     │ • Roles     ├──┤ • DBs       ├──┤ • Migrations├──┤ • KB        ├──┤ • CDN       │     │
-│     │ • SSO       ├──┤   routing   ├──┤ • Syncing   ├──┤ • Isolation ├──┤ • Caching   │     │
-│     └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘     │
-│            └────────────────┴────────────────┼────────────────┴────────────────┘            │
-│    ┌─────────────────────────────────────────┴─────────────────────────────────────────┐    │
-│    │                                      Databases                                    │    │
-│    │    ┌─────────┐  ┌──────────┐  ┌─────────┐  ┌─────────┐  ┌────────┐  ┌───────┐     │    │x`
-│    │    │ Acme Co │  │ Plex Inc │  │ Grav LLC│  │ Northrn │  │ Adatum │  │  ...  │     │    │
-│    │    └─────────┘  └──────────┘  └─────────┘  └─────────┘  └────────┘  └───────┘     │    │
-│    └───────────────────────────────────────────────────────────────────────────────────┘    │
-│                                                                                             │
-└─────────────────────────────────────────────────────────────────────────────────────────────┘
-```
+This repository currently represents a working prototype, not a finished product.
 
 ## Quick Start
 
@@ -65,7 +44,7 @@ The current build should be treated as a working prototype: core flows exist, bu
 cd api
 ```
 
-### 1. Set Environment Variables
+### 1) Set environment variables
 
 ```ini
 TURSO_API_KEY="your-turso-key"
@@ -75,32 +54,29 @@ ATOMICBASE_CORS_ORIGINS="http://localhost:3000,http://localhost:5173"
 ATOMICBASE_API_KEY="your-api-key"
 ```
 
-### 2. Start API Server
+### 2) Start the API
 
 ```bash
 make run
 ```
 
-Server runs at `http://localhost:8080` by default.
+By default the server runs at `http://localhost:8080`.
 
-### 3. Install Packages
+### 3) Install SDK and template package
 
 ```bash
 npm install @atomicbase/sdk @atomicbase/template
 ```
 
-### 4. Initialize Config
+### 4) Initialize project config
 
 ```bash
 npx atomicbase init
 ```
 
-Creates `atomicbase.config.ts` file & schemas folder
-
-### 5. Define & Push Schema
+### 5) Define and push a schema template
 
 ```typescript
-// schemas/my-app.schema.ts
 import { defineSchema, defineTable, c } from "@atomicbase/template";
 
 export default defineSchema("my-app", {
@@ -116,7 +92,7 @@ export default defineSchema("my-app", {
 npx atomicbase templates push
 ```
 
-### 6. Create a Database
+### 6) Create a tenant database
 
 ```typescript
 import { createClient } from "@atomicbase/sdk";
@@ -129,63 +105,40 @@ const client = createClient({
 await client.databases.create({ name: "acme-corp", template: "my-app" });
 ```
 
-### 7. Query Data
+### 7) Query tenant data
 
 ```typescript
 import { eq } from "@atomicbase/sdk";
 
 const acme = client.database("acme-corp");
 
-// Insert
 await acme.from("users").insert({ name: "Alice", email: "alice@example.com" });
-
-// Select
 const { data } = await acme.from("users").select();
-
-// Update
 await acme.from("users").update({ name: "Alicia" }).where(eq("id", 1));
-
-// Delete
 await acme.from("users").delete().where(eq("id", 1));
 ```
 
-## Important Decisions
+## Key Ideas
 
-### 1. Reliability Over Control
+- **Tenant isolation by default**: each tenant gets its own database.
+- **Templates keep systems aligned**: define once, roll forward with migrations.
+- **Strict versions + lazy sync**: out-of-date tenant databases are synchronized when accessed.
+- **Simple operational model**: single Go service with a focused API surface.
 
-Tight rules like TypeScript-only schemas and no direct SQL access trade off control for reliability. A database-per-customer system has a lot of moving parts. These multi-database systems are often used in B2B situations where high security and reliability are crucial. One small mistake can cause a database to go out of sync or make it vulnerable to attacks directly through the API. That's exactly why we avoid custom SQL, define schemas idempotently per template, and put querying in a completely separate API from schema changes.
+## Roadmap (incomplete)
 
-### 2. Fair-Source License
-
-Our fair-source license allows anyone to self-host AtomBase in production for free but provides us protection against competing hosted services. We want self-hosting AtomBase to feel simple and reliable. AtomBase is a single binary and comes with a docker and fly config that makes self-hosting trivial. But that same simplicity makes it easy for third parties to commoditize our software. Fair-source gives us a sustainable business model and you the best possible self-hostable software.
-
-### 3. Single Binary
-
-AtomBase was built on top of Go and SQLite for an important reason. They're both incredibly simple and powerful. They make it easy to set up your architecture, maintain it, and scale it. We feel strongly that AtomBase must live up to this same standard. Packing everything into a single binary and paying attention to all the tiny details that make a software feel simple to use is how we live up to this standard.
-
-### 4. TypeScript Schema Templates
-
-We decided to make our schema templates idempotent TypeScript files so that schemas felt easy to manage and ready for the future of development with AI. Anyone can set up their entire platform's schema through TypeScript and our CLI.
-
-### 5. Strict Database Versions
-
-We decided that requiring each database to be on the latest version of its template to be accessed was the best way to prevent weird/silent errors. If you change the expected shape of your databases, having a database left out of sync could create weird, potentially dangerous behaviour. Even though we strive to make our migration system as robust as it can be, it's always possible to have a database out of sync when you're managing so many.
-
-### 6. Session-based Authentication
-
-This is another design choice centered around simplicity and security. JWTs are not inherently insecure, but making them fully secure is overly complicated for both us and anyone using AtomBase. Sessions are uniquely powerful for an SQLite system as well because database reads are incredibly fast and inexpensive. Lucia has a great discussion about why they switched from JWTs to sessions: [Lucia discussion](https://github.com/lucia-auth/lucia/discussions/112)
-
-### 7. POST-only query API
-
-All query operations go through one route: `POST /data/query`. While it feels wrong to do a select or a delete through POST, we tested full REST-style and it was just too cumbersome. Adding where conditions, joins, ordering, etc to GET and DELETE methods that don't support request bodies has too many edge cases.
+- Enterprise authentication (orgs, RBAC, SSO, RLS)
+- Storage APIs and object workflows
+- AI APIs with tenant-scoped context
+- Dashboard and improved operator tooling
 
 ## Examples
 
-- [react-todo](./examples/react-todo) - Next.js todo app with Google OAuth and database-per-user architecture
+- [react-todo](./examples/react-todo) - Next.js todo app with a database-per-user architecture
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 
