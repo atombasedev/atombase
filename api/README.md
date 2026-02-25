@@ -230,9 +230,6 @@ POST /platform/templates/{name}/diff
 POST /platform/templates/{name}/migrate
 {"schema": {/* new schema */}}
 
-# Rollback to previous version
-POST /platform/templates/{name}/rollback
-
 # View version history
 GET /platform/templates/{name}/history
 
@@ -402,7 +399,7 @@ Requests flow through middleware in this order:
 
 - **Simple deployment**: Single binary with embedded SQLite, no external dependencies
 - **Database-per-customer isolation**: Each customer gets a separate database with complete isolation
-- **Schema versioning**: Templates with version history and rollback
+- **Schema versioning**: Templates with version history and declarative migrations
 - **Flexible queries**: Complex filtering, joins, pagination, and full-text search
 - **Atomic operations**: Batch transactions with all-or-nothing execution
 - **Low latency**: Schema caching and connection pooling
