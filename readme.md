@@ -1,15 +1,19 @@
-# Atomicbase
+# AtomBase
 
 **Manage a million databases like it's one.**
 
-Atomicbase is the Turso development platform, packaged as a single Go executable.
+AtomBase is the Turso development platform, packaged as a single Go executable.
+
+> [!CAUTION]
+> **AtomBase is currently a prototype and is not complete.**
+> This project is still under active development, has unfinished components, and is not production-ready.
 
 ## Philosophy
 
-At its core, Atomicbase was built to make multi-database systems more predictable and reliable. There are a lot of moving parts in a multi-database system. And in situations where this architecture is used, high security and reliability are the top priorities. One small mistake can cause a database to go out of sync, corrupt, or be vulnerable to attacks. Every design choice was made with security and reliability first. We're not just building a reliable platform. We're creating a platform that makes building reliable applications on top of it feel easy.
+At its core, AtomBase was built to make multi-database systems more predictable and reliable. There are a lot of moving parts in a multi-database system. And in situations where this architecture is used, high security and reliability are the top priorities. One small mistake can cause a database to go out of sync, corrupt, or be vulnerable to attacks. Every design choice was made with security and reliability first. We're not just building a reliable platform. We're creating a platform that makes building reliable applications on top of it feel easy.
 
 > [!WARNING]
-> **Atomicbase is in experimental preview.** There are many known and unknown bugs. APIs are likely to change.
+> **AtomBase is in experimental preview.** There are many known and unknown bugs. APIs are likely to change.
 
 ## Status
 
@@ -27,11 +31,13 @@ At its core, Atomicbase was built to make multi-database systems more predictabl
 | Realtime         | Planned      |
 | Dashboard        | Planned      |
 
+The current build should be treated as a working prototype: core flows exist, but feature coverage, hardening, and long-term API stability are still in progress.
+
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                          Atomicbase                                         │
+│                                           AtomBase                                          │
 ├─────────────────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                             │
 │     ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐     │
@@ -151,11 +157,11 @@ Tight rules like TypeScript-only schemas and no direct SQL access trade off cont
 
 ### 2. Fair-Source License
 
-Our fair-source license allows anyone to self-host Atomicbase in production for free but provides us protection against competing hosted services. We want self-hosting Atomicbase to feel simple and reliable. Atomicbase is a single binary and comes with a docker and fly config that makes self-hosting trivial. But that same simplicity makes it easy for third parties to commoditize our software. Fair-source gives us a sustainable business model and you the best possible self-hostable software.
+Our fair-source license allows anyone to self-host AtomBase in production for free but provides us protection against competing hosted services. We want self-hosting AtomBase to feel simple and reliable. AtomBase is a single binary and comes with a docker and fly config that makes self-hosting trivial. But that same simplicity makes it easy for third parties to commoditize our software. Fair-source gives us a sustainable business model and you the best possible self-hostable software.
 
 ### 3. Single Binary
 
-Atomicbase was built on top of Go and SQLite for an important reason. They're both incredibly simple and powerful. They make it easy to set up your architecture, maintain it, and scale it. We feel strongly that Atomicbase must live up to this same standard. Packing everything into a single binary and paying attention to all the tiny details that make a software feel simple to use is how we live up to this standard.
+AtomBase was built on top of Go and SQLite for an important reason. They're both incredibly simple and powerful. They make it easy to set up your architecture, maintain it, and scale it. We feel strongly that AtomBase must live up to this same standard. Packing everything into a single binary and paying attention to all the tiny details that make a software feel simple to use is how we live up to this standard.
 
 ### 4. TypeScript Schema Templates
 
@@ -167,7 +173,7 @@ We decided that requiring each database to be on the latest version of its templ
 
 ### 6. Session-based Authentication
 
-This is another design choice centered around simplicity and security. JWTs are not inherently insecure, but making them fully secure is overly complicated for both us and anyone using Atomicbase. Sessions are uniquely powerful for an SQLite system as well because database reads are incredibly fast and inexpensive. Lucia has a great discussion about why they switched from JWTs to sessions: [Lucia discussion](https://github.com/lucia-auth/lucia/discussions/112)
+This is another design choice centered around simplicity and security. JWTs are not inherently insecure, but making them fully secure is overly complicated for both us and anyone using AtomBase. Sessions are uniquely powerful for an SQLite system as well because database reads are incredibly fast and inexpensive. Lucia has a great discussion about why they switched from JWTs to sessions: [Lucia discussion](https://github.com/lucia-auth/lucia/discussions/112)
 
 ### 7. POST-only query API
 
@@ -183,4 +189,4 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for guidelines.
 
 ## License
 
-Atomicbase is [fair-source](https://fair.io) licensed under [FSL-1.1-MIT](./LICENSE). You can use, modify, and self-host the software freely for your own applications. The only restriction is offering Atomicbase as a competing hosted service. The license converts to MIT after two years.
+AtomBase is [fair-source](https://fair.io) licensed under [FSL-1.1-MIT](./LICENSE). You can use, modify, and self-host the software freely for your own applications. The only restriction is offering AtomBase as a competing hosted service. The license converts to MIT after two years.
