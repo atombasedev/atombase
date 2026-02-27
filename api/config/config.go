@@ -11,16 +11,17 @@ import (
 
 // Config holds all application configuration values.
 type Config struct {
-	Port             string   // HTTP server port (e.g., ":8080")
-	PrimaryDBPath    string   // Path to primary SQLite database file
-	DataDir          string   // Directory for storing database files
+	ApiURL         string
+	Port           string   // HTTP server port (e.g., ":8080")
+	PrimaryDBPath  string   // Path to primary SQLite database file
+	DataDir        string   // Directory for storing database files
 	MaxRequestBody int64    // Maximum request body size in bytes
 	APIKey         string   // API key for authentication (empty disables auth)
 	CORSOrigins    []string // Allowed CORS origins (empty allows none, "*" allows all)
-	RequestTimeout   int      // Request timeout in seconds (0 uses default of 30s)
-	MaxQueryDepth    int      // Maximum nesting depth for queries (default 5)
-	MaxQueryLimit    int      // Maximum rows per query (default 1000, 0 = unlimited)
-	DefaultLimit     int      // Default limit when not specified (default 100, 0 = unlimited)
+	RequestTimeout int      // Request timeout in seconds (0 uses default of 30s)
+	MaxQueryDepth  int      // Maximum nesting depth for queries (default 5)
+	MaxQueryLimit  int      // Maximum rows per query (default 1000, 0 = unlimited)
+	DefaultLimit   int      // Default limit when not specified (default 100, 0 = unlimited)
 
 	// Turso configuration (for multi-tenant external databases)
 	TursoOrganization   string // Turso organization name
@@ -50,6 +51,7 @@ func init() {
 
 // Load reads configuration from environment variables with sensible defaults.
 func Load() Config {
+
 	requestTimeout := 30
 	if val := os.Getenv("ATOMICBASE_REQUEST_TIMEOUT"); val != "" {
 		if t, err := strconv.Atoi(val); err == nil && t > 0 {
@@ -87,16 +89,17 @@ func Load() Config {
 	}
 
 	return Config{
-		Port:             getEnv("PORT", ":8080"),
-		PrimaryDBPath:    getEnv("DB_PATH", "atomicdata/primary.db"),
-		DataDir:          getEnv("DATA_DIR", "atomicdata"),
+		ApiURL:         getEnv("API_URL", "http://localhost:8080"),
+		Port:           getEnv("PORT", ":8080"),
+		PrimaryDBPath:  getEnv("DB_PATH", "atomicdata/primary.db"),
+		DataDir:        getEnv("DATA_DIR", "atomicdata"),
 		MaxRequestBody: 1 << 20, // 1MB
 		APIKey:         os.Getenv("ATOMICBASE_API_KEY"),
 		CORSOrigins:    corsOrigins,
-		RequestTimeout:   requestTimeout,
-		MaxQueryDepth:    maxQueryDepth,
-		MaxQueryLimit:    maxQueryLimit,
-		DefaultLimit:     defaultLimit,
+		RequestTimeout: requestTimeout,
+		MaxQueryDepth:  maxQueryDepth,
+		MaxQueryLimit:  maxQueryLimit,
+		DefaultLimit:   defaultLimit,
 
 		// Turso configuration
 		TursoOrganization:   os.Getenv("TURSO_ORGANIZATION"),
