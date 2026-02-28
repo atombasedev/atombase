@@ -24,8 +24,6 @@ type DbResponseHandler func(ctx context.Context, db *Database, req *http.Request
 // RegisterRoutes registers all Data API routes on the provided ServeMux.
 // All routes are prefixed with /data.
 func (api *API) RegisterRoutes(app *http.ServeMux) {
-	// Health check (no auth required)
-	app.HandleFunc("GET /health", api.handleHealth())
 	// OpenAPI documentation (no auth required)
 	// app.HandleFunc("GET /openapi.yaml", handleOpenAPISpec())
 	app.HandleFunc("GET /docs", handleSwaggerUI())
@@ -210,27 +208,6 @@ func (api *API) handleQueryRows() http.HandlerFunc {
 	})
 }
 
-func (api *API) handleHealth() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if api == nil || api.store == nil || api.store.DB() == nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte(`{"status":"unhealthy","error":"database connection failed"}`))
-			return
-		}
-
-		if err := api.store.DB().PingContext(r.Context()); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte(`{"status":"unhealthy","error":"database ping failed"}`))
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"healthy"}`))
-	}
-}
 
 // func handleOpenAPISpec() http.HandlerFunc {
 // 	return func(w http.ResponseWriter, r *http.Request) {

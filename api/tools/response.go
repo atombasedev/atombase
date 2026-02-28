@@ -25,6 +25,12 @@ func RespErr(w http.ResponseWriter, err error) {
 func BuildAPIError(err error) (int, APIError) {
 	// Map known errors to appropriate status codes, codes, and hints
 	switch {
+	case errors.Is(err, ErrUnauthorized):
+		return http.StatusUnauthorized, APIError{
+			Code:    CodeUnauthorized,
+			Message: strings.TrimPrefix(err.Error(), "unauthorized: "),
+			Hint:    "Provide a valid session token in the Authorization header.",
+		}
 	case errors.Is(err, ErrTableNotFound):
 		return http.StatusNotFound, APIError{
 			Code:    CodeTableNotFound,
@@ -209,7 +215,7 @@ func BuildAPIError(err error) (int, APIError) {
 		return http.StatusForbidden, APIError{
 			Code:    CodeReservedTable,
 			Message: err.Error(),
-			Hint:    "Tables prefixed with 'atomicbase_' are reserved for internal use.",
+			Hint:    "Tables prefixed with 'atombase_' are reserved for internal use.",
 		}
 	case errors.Is(err, ErrNoFTSIndex):
 		return http.StatusBadRequest, APIError{

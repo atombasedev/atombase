@@ -151,52 +151,96 @@ func TimeoutMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// AuthMiddleware validates the API key from the Authorization header.
-// If ATOMICBASE_API_KEY is not set, authentication is disabled.
-// Expected header format: Authorization: Bearer <api-key>
-// Public endpoints: /health, /openapi.yaml, /docs
+// AuthRole represents the authenticated role type.
+type AuthRole string
+
+const (
+	RoleAnonymous AuthRole = "anonymous"
+	RoleService   AuthRole = "service"
+	RoleUser      AuthRole = "user"
+)
+
+type authContextKey struct{}
+
+// AuthContext contains authentication information set by the middleware.
+type AuthContext struct {
+	Role  AuthRole
+	Token string // Raw token (for session validation by handlers)
+}
+
+// GetAuthContext retrieves auth context from request context.
+func GetAuthContext(ctx context.Context) AuthContext {
+	if auth, ok := ctx.Value(authContextKey{}).(AuthContext); ok {
+		return auth
+	}
+	return AuthContext{Role: RoleAnonymous}
+}
+
+func respondUnauthorized(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	json.NewEncoder(w).Encode(map[string]string{
+		"code":    "UNAUTHORIZED",
+		"message": msg,
+	})
+}
+
+// AuthMiddleware identifies the caller and sets auth context.
+// Token formats:
+//   - "service.<api_key>" → RoleService (admin access)
+//   - "<sessionId>.<secret>" → RoleUser (session validated by handler)
+//   - No header → RoleAnonymous
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Public endpoints that don't require authentication
-		switch r.URL.Path {
-		case "/health", "/openapi.yaml", "/docs", "/platform/health":
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		apiKey := config.Cfg.APIKey
-		if apiKey == "" {
-			// Authentication disabled
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		auth := r.Header.Get("Authorization")
+
+		// No auth header - anonymous access
 		if auth == "" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"code": "UNAUTHORIZED", "message": "missing Authorization header"})
+			ctx := context.WithValue(r.Context(), authContextKey{}, AuthContext{Role: RoleAnonymous})
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
-		// Expect "Bearer <token>" format
-		parts := strings.SplitN(auth, " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"code": "UNAUTHORIZED", "message": "invalid Authorization header format"})
+		// Must be "Bearer <token>" format
+		if len(auth) < 8 || !strings.EqualFold(auth[:7], "Bearer ") {
+			respondUnauthorized(w, "invalid authorization format")
 			return
 		}
 
-		// Use constant-time comparison to prevent timing attacks
-		if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(apiKey)) != 1 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"code": "UNAUTHORIZED", "message": "invalid API key"})
+		token := auth[7:]
+
+		// Service role: "service.<api_key>"
+		if strings.HasPrefix(token, "service.") {
+			apiKey := config.Cfg.APIKey
+			if apiKey == "" {
+				respondUnauthorized(w, "service authentication not configured")
+				return
+			}
+
+			secret := strings.TrimPrefix(token, "service.")
+			if subtle.ConstantTimeCompare([]byte(secret), []byte(apiKey)) != 1 {
+				respondUnauthorized(w, "invalid service key")
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), authContextKey{}, AuthContext{Role: RoleService})
+			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		// User session token: "<sessionId>.<secret>"
+		// Session validation happens in handler
+		if strings.Contains(token, ".") {
+			ctx := context.WithValue(r.Context(), authContextKey{}, AuthContext{
+				Role:  RoleUser,
+				Token: token,
+			})
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
+
+		// Unrecognized token format
+		respondUnauthorized(w, "invalid token format")
 	})
 }
 

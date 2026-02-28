@@ -91,10 +91,10 @@ const (
 
 // InternalTablePrefix is the prefix for internal atomicbase tables.
 // Tables with this prefix are excluded from user queries and schema sync operations.
-const InternalTablePrefix = "atomicbase_"
+const InternalTablePrefix = "atombase_"
 
 // ReservedTableTemplates stores schema templates for multi-tenant database management.
-const ReservedTableTemplates = "atomicbase_schema_templates"
+const ReservedTableTemplates = "atombase_schema_templates"
 
 // ReservedTableTemplatesHistory stores version history for schema templates.
-const ReservedTableTemplatesHistory = "atomicbase_templates_history"
+const ReservedTableTemplatesHistory = "atombase_templates_history"

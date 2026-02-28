@@ -9,6 +9,7 @@ import (
 // Error codes for SDK consumption.
 // These codes are stable and can be used for programmatic error handling.
 const (
+	CodeUnauthorized        = "UNAUTHORIZED"
 	CodeTableNotFound       = "TABLE_NOT_FOUND"
 	CodeColumnNotFound      = "COLUMN_NOT_FOUND"
 	CodeDatabaseNotFound    = "DATABASE_NOT_FOUND"
@@ -132,6 +133,14 @@ func NoRelationshipErr(table1, table2 string) error {
 // InvalidRequestErr returns an error for invalid request validation.
 func InvalidRequestErr(msg string) error {
 	return fmt.Errorf("invalid request: %s", msg)
+}
+
+// ErrUnauthorized is the sentinel error for unauthorized requests.
+var ErrUnauthorized = errors.New("unauthorized")
+
+// UnauthorizedErr returns an unauthorized error with a custom message.
+func UnauthorizedErr(msg string) error {
+	return fmt.Errorf("%w: %s", ErrUnauthorized, msg)
 }
 
 // InvalidMigrationErr returns an error for migration validation failures.
