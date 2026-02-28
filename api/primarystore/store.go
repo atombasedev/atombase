@@ -42,7 +42,7 @@ func New(conn *sql.DB) (*Store, error) {
 
 	lookupStmt, err := conn.Prepare(fmt.Sprintf(
 		"SELECT id, COALESCE(template_id, 0), COALESCE(template_version, 1) FROM %s WHERE name = ?",
-		"atomicbase_databases",
+		"atombase_databases",
 	))
 	if err != nil {
 		return nil, fmt.Errorf("failed to prepare database lookup statement: %w", err)
@@ -110,7 +110,7 @@ func (s *Store) GetMigrationsBetween(ctx context.Context, templateID int32, from
 		  AND from_version >= ?
 		  AND to_version <= ?
 		ORDER BY from_version ASC
-	`, "atomicbase_migrations"), templateID, fromVersion, toVersion)
+	`, "atombase_migrations"), templateID, fromVersion, toVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +156,7 @@ func (s *Store) GetMigrationsBetween(ctx context.Context, templateID int32, from
 	return migrations, nil
 }
 
-// UpdateDatabaseVersion updates atomicbase_databases.template_version.
+// UpdateDatabaseVersion updates atombase_databases.template_version.
 func (s *Store) UpdateDatabaseVersion(ctx context.Context, databaseID int32, version int) error {
 	if s == nil || s.conn == nil {
 		return errors.New("primary store not initialized")
@@ -166,7 +166,7 @@ func (s *Store) UpdateDatabaseVersion(ctx context.Context, databaseID int32, ver
 		UPDATE %s
 		SET template_version = ?, updated_at = ?
 		WHERE id = ?
-	`, "atomicbase_databases"), version, time.Now().UTC().Format(time.RFC3339), databaseID)
+	`, "atombase_databases"), version, time.Now().UTC().Format(time.RFC3339), databaseID)
 	return err
 }
 
@@ -184,5 +184,5 @@ func (s *Store) RecordMigrationFailure(ctx context.Context, databaseID int32, fr
 			to_version = excluded.to_version,
 			error = excluded.error,
 			created_at = excluded.created_at
-	`, "atomicbase_migration_failures"), databaseID, fromVersion, toVersion, migrationErr.Error(), time.Now().UTC().Format(time.RFC3339))
+	`, "atombase_migration_failures"), databaseID, fromVersion, toVersion, migrationErr.Error(), time.Now().UTC().Format(time.RFC3339))
 }
