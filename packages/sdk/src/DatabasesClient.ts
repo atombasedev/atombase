@@ -57,7 +57,7 @@ export class DatabasesClient {
     };
 
     if (this.apiKey) {
-      headers["Authorization"] = `Bearer ${this.apiKey}`;
+      headers["Authorization"] = `Bearer service.${this.apiKey}`;
     }
 
     return headers;

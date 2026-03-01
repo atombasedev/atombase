@@ -134,7 +134,7 @@ export class ApiClient {
     };
 
     if (this.apiKey) {
-      headers["Authorization"] = `Bearer ${this.apiKey}`;
+      headers["Authorization"] = `Bearer service.${this.apiKey}`;
     }
 
     // Temporarily disable SSL verification if insecure mode is enabled

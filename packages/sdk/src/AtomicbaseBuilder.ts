@@ -374,7 +374,7 @@ export abstract class AtomicbaseBuilder<T> implements PromiseLike<AtomicbaseResp
     };
 
     if (this.apiKey) {
-      headers["Authorization"] = `Bearer ${this.apiKey}`;
+      headers["Authorization"] = `Bearer service.${this.apiKey}`;
     }
 
     if (this.database) {
