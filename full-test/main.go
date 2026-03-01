@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -35,6 +37,19 @@ type config struct {
 	keepResources bool
 	failOn4xx     bool
 	requestTimout time.Duration
+
+	// Intensive test settings
+	concurrency   int // Number of concurrent workers
+	batchSize     int // Max rows per batch operation
+	maxRows       int // Max rows for large reads (should be <= server limit)
+	stressMode     bool
+	stressWorkers  int
+	stressDuration time.Duration
+
+	// Benchmark settings
+	benchmarkMode     bool
+	benchmarkDuration time.Duration
+	benchmarkWarmup   time.Duration
 }
 
 type provisionedResources struct {
@@ -64,16 +79,24 @@ type apiError struct {
 }
 
 type op struct {
-	name string
-	run  func(*rand.Rand, *runState) error
+	name   string
+	weight int
+	run    func(*rand.Rand, *runState) error
 }
 
 type runState struct {
 	cfg    config
 	client *client
 	model  map[int]todo
+	mu     sync.RWMutex // Protects model for concurrent access
 	step   int
 	seed   int64
+}
+
+type stressStats struct {
+	requests  atomic.Int64
+	errors    atomic.Int64
+	latencyNs atomic.Int64
 }
 
 func main() {
@@ -102,6 +125,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Run stress test if enabled
+	if cfg.stressMode {
+		if err := runStressTest(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Stress test failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Run max RPS benchmark if enabled
+	if cfg.benchmarkMode {
+		if err := runBenchmark(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Benchmark failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if cfg.loop {
 		run := int64(0)
 		for {
@@ -120,6 +161,451 @@ func main() {
 		printReplayHint(cfg, cfg.seed)
 		os.Exit(1)
 	}
+}
+
+func runStressTest(cfg config) error {
+	fmt.Printf("Starting stress test: workers=%d duration=%s\n", cfg.stressWorkers, cfg.stressDuration)
+
+	httpClient := &http.Client{Timeout: cfg.requestTimout}
+	c := &client{
+		httpClient: httpClient,
+		baseURL:    strings.TrimRight(cfg.baseURL, "/"),
+		database:   cfg.database,
+		table:      cfg.table,
+		token:      cfg.token,
+	}
+
+	// Verify connection
+	s := &runState{cfg: cfg, client: c, model: map[int]todo{}}
+	if err := s.healthcheck(); err != nil {
+		return err
+	}
+
+	var stats stressStats
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.stressDuration)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	for i := 0; i < cfg.stressWorkers; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			r := rand.New(rand.NewSource(time.Now().UnixNano() + int64(workerID)))
+			runStressWorker(ctx, c, cfg, r, &stats)
+		}(i)
+	}
+
+	// Progress reporting
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				reqs := stats.requests.Load()
+				errs := stats.errors.Load()
+				totalLatency := stats.latencyNs.Load()
+				avgLatency := time.Duration(0)
+				if reqs > 0 {
+					avgLatency = time.Duration(totalLatency / reqs)
+				}
+				fmt.Printf("\rRequests: %d | Errors: %d | Avg Latency: %v     ", reqs, errs, avgLatency)
+			}
+		}
+	}()
+
+	wg.Wait()
+	fmt.Println()
+
+	reqs := stats.requests.Load()
+	errs := stats.errors.Load()
+	totalLatency := stats.latencyNs.Load()
+	avgLatency := time.Duration(0)
+	if reqs > 0 {
+		avgLatency = time.Duration(totalLatency / reqs)
+	}
+
+	fmt.Printf("Stress test complete:\n")
+	fmt.Printf("  Total requests: %d\n", reqs)
+	fmt.Printf("  Errors: %d (%.2f%%)\n", errs, float64(errs)/float64(reqs)*100)
+	fmt.Printf("  Avg latency: %v\n", avgLatency)
+	fmt.Printf("  Throughput: %.2f req/s\n", float64(reqs)/cfg.stressDuration.Seconds())
+
+	return nil
+}
+
+type benchmarkStats struct {
+	requests   atomic.Int64
+	errors     atomic.Int64
+	latencies  []int64 // nanoseconds, collected for percentile calculation
+	latencyMu  sync.Mutex
+	startTime  time.Time
+	windowReqs []int64 // requests per second for each window
+	windowMu   sync.Mutex
+	errorMsgs  map[string]int64 // deduplicated error messages with counts
+	errorMu    sync.Mutex
+}
+
+func runBenchmark(cfg config) error {
+	fmt.Printf("=== Max RPS Benchmark ===\n")
+	fmt.Printf("Warmup: %s | Duration: %s\n", cfg.benchmarkWarmup, cfg.benchmarkDuration)
+
+	httpClient := &http.Client{
+		Timeout: cfg.requestTimout,
+		Transport: &http.Transport{
+			MaxIdleConns:        1000,
+			MaxIdleConnsPerHost: 1000,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+	c := &client{
+		httpClient: httpClient,
+		baseURL:    strings.TrimRight(cfg.baseURL, "/"),
+		database:   cfg.database,
+		table:      cfg.table,
+		token:      cfg.token,
+	}
+
+	// Verify connection
+	s := &runState{cfg: cfg, client: c, model: map[int]todo{}}
+	if err := s.healthcheck(); err != nil {
+		return err
+	}
+
+	// Seed some data first
+	fmt.Print("Seeding test data...")
+	for i := 0; i < 100; i++ {
+		t := todo{ID: i + 1, Title: fmt.Sprintf("bench-%d", i), Completed: false}
+		body := map[string]any{"data": []map[string]any{todoToMap(cfg, t)}}
+		c.query("insert,on-conflict=replace", body)
+	}
+	fmt.Println(" done")
+
+	// Determine worker count - start with many workers to saturate
+	numWorkers := 100
+	if cfg.stressWorkers > 0 {
+		numWorkers = cfg.stressWorkers
+	}
+
+	var stats benchmarkStats
+	stats.startTime = time.Now()
+	stats.errorMsgs = make(map[string]int64)
+
+	totalDuration := cfg.benchmarkWarmup + cfg.benchmarkDuration
+	ctx, cancel := context.WithTimeout(context.Background(), totalDuration)
+	defer cancel()
+
+	var wg sync.WaitGroup
+
+	// Start workers
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			r := rand.New(rand.NewSource(time.Now().UnixNano() + int64(workerID)))
+			runBenchmarkWorker(ctx, c, r, &stats, cfg.benchmarkWarmup)
+		}(i)
+	}
+
+	// Progress reporter
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		lastReqs := int64(0)
+		secondNum := 0
+		warmupSecs := int(cfg.benchmarkWarmup.Seconds())
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				secondNum++
+				reqs := stats.requests.Load()
+				rps := reqs - lastReqs
+				lastReqs = reqs
+				errs := stats.errors.Load()
+
+				// Only record RPS after warmup
+				if secondNum > warmupSecs {
+					stats.windowMu.Lock()
+					stats.windowReqs = append(stats.windowReqs, rps)
+					stats.windowMu.Unlock()
+				}
+
+				status := "WARMUP"
+				if secondNum > warmupSecs {
+					status = "BENCH"
+				}
+				fmt.Printf("\r[%s] RPS: %5d | Total: %6d | Errors: %d     ", status, rps, reqs, errs)
+			}
+		}
+	}()
+
+	wg.Wait()
+	fmt.Println()
+
+	// Calculate results
+	stats.windowMu.Lock()
+	windowReqs := stats.windowReqs
+	stats.windowMu.Unlock()
+
+	if len(windowReqs) == 0 {
+		return fmt.Errorf("no benchmark data collected")
+	}
+
+	// Calculate stats
+	var totalRPS int64
+	var peakRPS int64
+	for _, rps := range windowReqs {
+		totalRPS += rps
+		if rps > peakRPS {
+			peakRPS = rps
+		}
+	}
+	avgRPS := totalRPS / int64(len(windowReqs))
+
+	// Get latency percentiles
+	stats.latencyMu.Lock()
+	latencies := stats.latencies
+	stats.latencyMu.Unlock()
+
+	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
+
+	var p50, p90, p99 time.Duration
+	if len(latencies) > 0 {
+		p50 = time.Duration(latencies[len(latencies)*50/100])
+		p90 = time.Duration(latencies[len(latencies)*90/100])
+		p99 = time.Duration(latencies[len(latencies)*99/100])
+	}
+
+	fmt.Printf("\n=== Benchmark Results ===\n")
+	fmt.Printf("Workers:     %d\n", numWorkers)
+	fmt.Printf("Duration:    %s (after %s warmup)\n", cfg.benchmarkDuration, cfg.benchmarkWarmup)
+	fmt.Printf("Total Reqs:  %d\n", stats.requests.Load())
+	fmt.Printf("Errors:      %d (%.2f%%)\n", stats.errors.Load(), float64(stats.errors.Load())/float64(stats.requests.Load())*100)
+	fmt.Printf("\n")
+	fmt.Printf("Peak RPS:    %d\n", peakRPS)
+	fmt.Printf("Avg RPS:     %d\n", avgRPS)
+	fmt.Printf("\n")
+	fmt.Printf("Latency P50: %v\n", p50)
+	fmt.Printf("Latency P90: %v\n", p90)
+	fmt.Printf("Latency P99: %v\n", p99)
+
+	// Print deduplicated errors
+	stats.errorMu.Lock()
+	errorMsgs := stats.errorMsgs
+	stats.errorMu.Unlock()
+
+	if len(errorMsgs) > 0 {
+		fmt.Printf("\n=== Errors ===\n")
+
+		// Sort by count (descending)
+		type errCount struct {
+			msg   string
+			count int64
+		}
+		sorted := make([]errCount, 0, len(errorMsgs))
+		for msg, count := range errorMsgs {
+			sorted = append(sorted, errCount{msg, count})
+		}
+		sort.Slice(sorted, func(i, j int) bool {
+			return sorted[i].count > sorted[j].count
+		})
+
+		for _, e := range sorted {
+			fmt.Printf("  %5d × %s\n", e.count, e.msg)
+		}
+	}
+
+	return nil
+}
+
+func runBenchmarkWorker(ctx context.Context, c *client, r *rand.Rand, stats *benchmarkStats, warmup time.Duration) {
+	warmupEnd := stats.startTime.Add(warmup)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		start := time.Now()
+		isWarmup := start.Before(warmupEnd)
+
+		// Simple select query - fastest operation to measure max throughput
+		body := map[string]any{
+			"select": []any{"*"},
+			"limit":  10,
+		}
+		status, _, apiErr, err := c.query("select", body)
+
+		elapsed := time.Since(start)
+
+		// Only count after warmup
+		if !isWarmup {
+			stats.requests.Add(1)
+			if err != nil || status >= 400 {
+				stats.errors.Add(1)
+
+				// Record error message
+				var errMsg string
+				if err != nil {
+					errMsg = err.Error()
+				} else if apiErr != nil {
+					errMsg = fmt.Sprintf("[%d] %s: %s", status, apiErr.Code, apiErr.Message)
+				} else {
+					errMsg = fmt.Sprintf("[%d] unknown error", status)
+				}
+
+				stats.errorMu.Lock()
+				stats.errorMsgs[errMsg]++
+				stats.errorMu.Unlock()
+			}
+
+			// Sample latencies (collect ~10% to avoid memory issues)
+			if r.Intn(10) == 0 {
+				stats.latencyMu.Lock()
+				stats.latencies = append(stats.latencies, int64(elapsed))
+				stats.latencyMu.Unlock()
+			}
+		}
+	}
+}
+
+func runStressWorker(ctx context.Context, c *client, cfg config, r *rand.Rand, stats *stressStats) {
+	ops := []func(*rand.Rand, *client, config) error{
+		stressInsert,
+		stressSelect,
+		stressUpdate,
+		stressDelete,
+		stressBatchInsert,
+		stressLargeSelect,
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		start := time.Now()
+		op := ops[r.Intn(len(ops))]
+		err := op(r, c, cfg)
+		elapsed := time.Since(start)
+
+		stats.requests.Add(1)
+		stats.latencyNs.Add(int64(elapsed))
+		if err != nil {
+			stats.errors.Add(1)
+		}
+	}
+}
+
+func stressInsert(r *rand.Rand, c *client, cfg config) error {
+	t := randomTodo(r)
+	body := map[string]any{
+		"data": []map[string]any{todoToMap(cfg, t)},
+	}
+	status, _, _, err := c.query("insert,on-conflict=replace", body)
+	if err != nil {
+		return err
+	}
+	if status >= 500 {
+		return fmt.Errorf("insert failed status=%d", status)
+	}
+	return nil
+}
+
+func stressSelect(r *rand.Rand, c *client, cfg config) error {
+	body := map[string]any{
+		"select": []any{"*"},
+		"limit":  r.Intn(100) + 1,
+	}
+	status, _, _, err := c.query("select", body)
+	if err != nil {
+		return err
+	}
+	if status >= 500 {
+		return fmt.Errorf("select failed status=%d", status)
+	}
+	return nil
+}
+
+func stressUpdate(r *rand.Rand, c *client, cfg config) error {
+	id := r.Intn(500) + 1
+	body := map[string]any{
+		"data": map[string]any{
+			cfg.titleColumn:  fmt.Sprintf("stress-%d", r.Intn(1_000_000)),
+			cfg.completedCol: r.Intn(2) == 0,
+		},
+		"where": []map[string]any{{
+			cfg.idColumn: map[string]any{"eq": id},
+		}},
+	}
+	status, _, _, err := c.query("update", body)
+	if err != nil {
+		return err
+	}
+	if status >= 500 {
+		return fmt.Errorf("update failed status=%d", status)
+	}
+	return nil
+}
+
+func stressDelete(r *rand.Rand, c *client, cfg config) error {
+	id := r.Intn(500) + 1
+	body := map[string]any{
+		"where": []map[string]any{{
+			cfg.idColumn: map[string]any{"eq": id},
+		}},
+	}
+	status, _, _, err := c.query("delete", body)
+	if err != nil {
+		return err
+	}
+	if status >= 500 {
+		return fmt.Errorf("delete failed status=%d", status)
+	}
+	return nil
+}
+
+func stressBatchInsert(r *rand.Rand, c *client, cfg config) error {
+	batchSize := r.Intn(cfg.batchSize) + 1
+	data := make([]map[string]any, batchSize)
+	for i := 0; i < batchSize; i++ {
+		t := randomTodo(r)
+		data[i] = todoToMap(cfg, t)
+	}
+	body := map[string]any{"data": data}
+	status, _, _, err := c.query("insert,on-conflict=replace", body)
+	if err != nil {
+		return err
+	}
+	if status >= 500 {
+		return fmt.Errorf("batch insert failed status=%d", status)
+	}
+	return nil
+}
+
+func stressLargeSelect(r *rand.Rand, c *client, cfg config) error {
+	limit := r.Intn(cfg.maxRows-100) + 100 // 100 to maxRows
+	body := map[string]any{
+		"select": []any{"*"},
+		"limit":  limit,
+	}
+	status, _, _, err := c.query("select", body)
+	if err != nil {
+		return err
+	}
+	if status >= 500 {
+		return fmt.Errorf("large select failed status=%d", status)
+	}
+	return nil
 }
 
 func runSimulation(cfg config, seed int64) error {
@@ -149,14 +635,26 @@ func runSimulation(cfg config, seed int64) error {
 	}
 
 	ops := []op{
-		{name: "insert", run: runInsert},
-		{name: "update", run: runUpdate},
-		{name: "upsert", run: runUpsert},
-		{name: "delete", run: runDelete},
-		{name: "select", run: runSelect},
+		{name: "insert", weight: 20, run: runInsert},
+		{name: "update", weight: 15, run: runUpdate},
+		{name: "upsert", weight: 15, run: runUpsert},
+		{name: "delete", weight: 10, run: runDelete},
+		{name: "select", weight: 10, run: runSelect},
+		{name: "batch_insert", weight: 10, run: runBatchInsert},
+		{name: "batch_upsert", weight: 5, run: runBatchUpsert},
+		{name: "batch_delete", weight: 5, run: runBatchDelete},
+		{name: "large_select", weight: 5, run: runLargeSelect},
+		{name: "paginated_select", weight: 5, run: runPaginatedSelect},
 	}
 
-	fmt.Printf("Starting deterministic simulation: steps=%d seed=%d table=%s database=%s\n", cfg.steps, seed, cfg.table, cfg.database)
+	// Add concurrent ops if concurrency > 1
+	if cfg.concurrency > 1 {
+		ops = append(ops, op{name: "concurrent_mixed", weight: 10, run: runConcurrentMixed})
+	}
+
+	fmt.Printf("Starting deterministic simulation: steps=%d seed=%d table=%s database=%s concurrency=%d\n",
+		cfg.steps, seed, cfg.table, cfg.database, cfg.concurrency)
+
 	for i := 1; i <= cfg.steps; i++ {
 		s.step = i
 
@@ -165,12 +663,19 @@ func runSimulation(cfg config, seed int64) error {
 			return fmt.Errorf("step %d (%s): %w", i, chosen.name, err)
 		}
 
-		if err := s.verifySnapshot(); err != nil {
-			return fmt.Errorf("step %d (%s): %w", i, chosen.name, err)
+		// Verify less frequently for performance (every 10 steps)
+		if i%10 == 0 || i == cfg.steps {
+			if err := s.verifySnapshot(); err != nil {
+				return fmt.Errorf("step %d (%s): %w", i, chosen.name, err)
+			}
+		}
+
+		if i%100 == 0 {
+			fmt.Printf("\rProgress: %d/%d steps (%.1f%%)   ", i, cfg.steps, float64(i)/float64(cfg.steps)*100)
 		}
 	}
 
-	fmt.Printf("Simulation passed: steps=%d seed=%d\n", cfg.steps, seed)
+	fmt.Printf("\rSimulation passed: steps=%d seed=%d                    \n", cfg.steps, seed)
 	return nil
 }
 
@@ -197,6 +702,19 @@ func loadConfig() config {
 	failOn4xx := envBoolOr("SIM_FAIL_ON_4XX", false)
 	timeoutMS := envIntOr("SIM_TIMEOUT_MS", 5000)
 
+	// Intensive test settings
+	concurrency := envIntOr("SIM_CONCURRENCY", 1)
+	batchSize := envIntOr("SIM_BATCH_SIZE", 50)
+	maxRows := envIntOr("SIM_MAX_ROWS", 500)
+	stressMode := envBoolOr("SIM_STRESS", false)
+	stressWorkers := envIntOr("SIM_STRESS_WORKERS", 10)
+	stressDurationSec := envIntOr("SIM_STRESS_DURATION", 30)
+
+	// Benchmark settings
+	benchmarkMode := envBoolOr("SIM_BENCHMARK", false)
+	benchmarkDurationSec := envIntOr("SIM_BENCHMARK_DURATION", 10)
+	benchmarkWarmupSec := envIntOr("SIM_BENCHMARK_WARMUP", 2)
+
 	flag.StringVar(&baseURL, "base-url", baseURL, "Atomicbase API base URL")
 	flag.StringVar(&apiKey, "api-key", apiKey, "API key for CLI provisioning and API auth")
 	flag.StringVar(&repoRoot, "repo-root", repoRoot, "Atomicbase repo root (for invoking CLI)")
@@ -213,25 +731,45 @@ func loadConfig() config {
 	flag.BoolVar(&keepResources, "keep-resources", keepResources, "Keep provisioned template/database after run")
 	flag.BoolVar(&failOn4xx, "fail-on-4xx", failOn4xx, "Fail when API returns any 4xx")
 	flag.IntVar(&timeoutMS, "timeout-ms", timeoutMS, "HTTP timeout in milliseconds")
+
+	// Intensive test flags
+	flag.IntVar(&concurrency, "concurrency", concurrency, "Number of concurrent operations")
+	flag.IntVar(&batchSize, "batch-size", batchSize, "Max rows per batch operation")
+	flag.IntVar(&maxRows, "max-rows", maxRows, "Max rows for large reads (should be <= server limit)")
+	flag.BoolVar(&stressMode, "stress", stressMode, "Run stress test mode")
+	flag.IntVar(&stressWorkers, "stress-workers", stressWorkers, "Number of stress test workers")
+	flag.IntVar(&stressDurationSec, "stress-duration", stressDurationSec, "Stress test duration in seconds")
+	flag.BoolVar(&benchmarkMode, "benchmark", benchmarkMode, "Run max RPS benchmark")
+	flag.IntVar(&benchmarkDurationSec, "benchmark-duration", benchmarkDurationSec, "Benchmark duration in seconds")
+	flag.IntVar(&benchmarkWarmupSec, "benchmark-warmup", benchmarkWarmupSec, "Benchmark warmup period in seconds")
 	flag.Parse()
 
 	return config{
-		baseURL:       baseURL,
-		apiKey:        apiKey,
-		repoRoot:      repoRoot,
-		database:      database,
-		table:         table,
-		token:         token,
-		idColumn:      idCol,
-		titleColumn:   titleCol,
-		completedCol:  completedCol,
-		steps:         steps,
-		seed:          seed,
-		loop:          loop,
-		provision:     provision,
-		keepResources: keepResources,
-		failOn4xx:     failOn4xx,
-		requestTimout: time.Duration(timeoutMS) * time.Millisecond,
+		baseURL:        baseURL,
+		apiKey:         apiKey,
+		repoRoot:       repoRoot,
+		database:       database,
+		table:          table,
+		token:          token,
+		idColumn:       idCol,
+		titleColumn:    titleCol,
+		completedCol:   completedCol,
+		steps:          steps,
+		seed:           seed,
+		loop:           loop,
+		provision:      provision,
+		keepResources:  keepResources,
+		failOn4xx:      failOn4xx,
+		requestTimout:  time.Duration(timeoutMS) * time.Millisecond,
+		concurrency:    concurrency,
+		batchSize:      batchSize,
+		maxRows:        maxRows,
+		stressMode:        stressMode,
+		stressWorkers:     stressWorkers,
+		stressDuration:    time.Duration(stressDurationSec) * time.Second,
+		benchmarkMode:     benchmarkMode,
+		benchmarkDuration: time.Duration(benchmarkDurationSec) * time.Second,
+		benchmarkWarmup:   time.Duration(benchmarkWarmupSec) * time.Second,
 	}
 }
 
@@ -286,6 +824,98 @@ func runInsert(r *rand.Rand, s *runState) error {
 	}
 
 	s.model[t.ID] = t
+	return nil
+}
+
+func runBatchInsert(r *rand.Rand, s *runState) error {
+	batchSize := r.Intn(s.cfg.batchSize) + 1
+	data := make([]map[string]any, batchSize)
+	todos := make([]todo, batchSize)
+
+	for i := 0; i < batchSize; i++ {
+		t := randomTodo(r)
+		todos[i] = t
+		data[i] = todoToMap(s.cfg, t)
+	}
+
+	body := map[string]any{"data": data}
+	status, raw, apiErr, err := s.client.query("insert", body)
+	if err != nil {
+		return err
+	}
+
+	if status >= 400 {
+		if shouldFailStatus(s.cfg, status) {
+			return fmt.Errorf("batch insert rejected status=%d error=%+v raw=%s", status, apiErr, string(raw))
+		}
+		return nil
+	}
+
+	for _, t := range todos {
+		s.model[t.ID] = t
+	}
+	return nil
+}
+
+func runBatchUpsert(r *rand.Rand, s *runState) error {
+	batchSize := r.Intn(s.cfg.batchSize) + 1
+	data := make([]map[string]any, batchSize)
+	todos := make([]todo, batchSize)
+
+	for i := 0; i < batchSize; i++ {
+		t := randomTodo(r)
+		todos[i] = t
+		data[i] = todoToMap(s.cfg, t)
+	}
+
+	body := map[string]any{"data": data}
+	status, raw, apiErr, err := s.client.query("insert,on-conflict=replace", body)
+	if err != nil {
+		return err
+	}
+
+	if status >= 400 {
+		if shouldFailStatus(s.cfg, status) {
+			return fmt.Errorf("batch upsert rejected status=%d error=%+v raw=%s", status, apiErr, string(raw))
+		}
+		return nil
+	}
+
+	for _, t := range todos {
+		s.model[t.ID] = t
+	}
+	return nil
+}
+
+func runBatchDelete(r *rand.Rand, s *runState) error {
+	// Delete multiple IDs using IN clause
+	numToDelete := r.Intn(10) + 1
+	ids := make([]int, numToDelete)
+	for i := 0; i < numToDelete; i++ {
+		ids[i] = pickKnownOrRandomID(r, s.model)
+	}
+
+	body := map[string]any{
+		"where": []map[string]any{{
+			s.cfg.idColumn: map[string]any{"in": ids},
+		}},
+	}
+
+	status, raw, apiErr, err := s.client.query("delete", body)
+	if err != nil {
+		return err
+	}
+
+	if status >= 400 {
+		if shouldFailStatus(s.cfg, status) {
+			return fmt.Errorf("batch delete rejected status=%d error=%+v raw=%s", status, apiErr, string(raw))
+		}
+		return nil
+	}
+
+	for _, id := range ids {
+		delete(s.model, id)
+	}
 	return nil
 }
 
@@ -393,6 +1023,108 @@ func runSelect(r *rand.Rand, s *runState) error {
 	var rows []map[string]any
 	if err := json.Unmarshal(raw, &rows); err != nil {
 		return fmt.Errorf("select decode failed: %w raw=%s", err, string(raw))
+	}
+	return nil
+}
+
+func runLargeSelect(r *rand.Rand, s *runState) error {
+	// Select up to maxRows
+	limit := r.Intn(s.cfg.maxRows-10) + 10
+	body := map[string]any{
+		"select": []any{"*"},
+		"limit":  limit,
+		"order":  []any{s.cfg.idColumn},
+	}
+
+	status, raw, apiErr, err := s.client.query("select", body)
+	if err != nil {
+		return err
+	}
+
+	if status >= 400 {
+		if shouldFailStatus(s.cfg, status) {
+			return fmt.Errorf("large select rejected status=%d error=%+v raw=%s", status, apiErr, string(raw))
+		}
+		return nil
+	}
+
+	var rows []map[string]any
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return fmt.Errorf("large select decode failed: %w raw=%s", err, string(raw))
+	}
+	return nil
+}
+
+func runPaginatedSelect(r *rand.Rand, s *runState) error {
+	// Test offset/limit pagination
+	pageSize := r.Intn(50) + 10
+	offset := r.Intn(100)
+
+	body := map[string]any{
+		"select": []any{"*"},
+		"limit":  pageSize,
+		"offset": offset,
+		"order":  []any{s.cfg.idColumn},
+	}
+
+	status, raw, apiErr, err := s.client.query("select", body)
+	if err != nil {
+		return err
+	}
+
+	if status >= 400 {
+		if shouldFailStatus(s.cfg, status) {
+			return fmt.Errorf("paginated select rejected status=%d error=%+v raw=%s", status, apiErr, string(raw))
+		}
+		return nil
+	}
+
+	var rows []map[string]any
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return fmt.Errorf("paginated select decode failed: %w raw=%s", err, string(raw))
+	}
+	return nil
+}
+
+func runConcurrentMixed(r *rand.Rand, s *runState) error {
+	// Run multiple operations concurrently
+	numOps := r.Intn(s.cfg.concurrency) + 2
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, numOps)
+
+	for i := 0; i < numOps; i++ {
+		wg.Add(1)
+		go func(seed int64) {
+			defer wg.Done()
+			localR := rand.New(rand.NewSource(seed))
+
+			ops := []func(*rand.Rand, *runState) error{
+				runSelect,
+				runLargeSelect,
+				runPaginatedSelect,
+			}
+
+			// Only include write ops sometimes to avoid too many conflicts
+			if localR.Intn(3) == 0 {
+				ops = append(ops, runInsert, runUpsert)
+			}
+
+			op := ops[localR.Intn(len(ops))]
+			if err := op(localR, s); err != nil {
+				errCh <- err
+			}
+		}(r.Int63())
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	// Return first error if any
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -744,7 +1476,7 @@ func (c *client) query(preferOperation string, body map[string]any) (int, []byte
 	req.Header.Set("Database", c.database)
 	req.Header.Set("Prefer", "operation="+preferOperation)
 	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+		req.Header.Set("Authorization", "Bearer service."+c.token)
 	}
 
 	res, err := c.httpClient.Do(req)
@@ -778,24 +1510,25 @@ func shouldFailStatus(cfg config, status int) bool {
 }
 
 func weightedOp(r *rand.Rand, ops []op) op {
-	v := r.Intn(100)
-	switch {
-	case v < 30:
-		return ops[0] // insert
-	case v < 50:
-		return ops[1] // update
-	case v < 70:
-		return ops[2] // upsert
-	case v < 85:
-		return ops[3] // delete
-	default:
-		return ops[4] // select
+	totalWeight := 0
+	for _, o := range ops {
+		totalWeight += o.weight
 	}
+
+	v := r.Intn(totalWeight)
+	cumulative := 0
+	for _, o := range ops {
+		cumulative += o.weight
+		if v < cumulative {
+			return o
+		}
+	}
+	return ops[len(ops)-1]
 }
 
 func randomTodo(r *rand.Rand) todo {
 	return todo{
-		ID:        r.Intn(200) + 1,
+		ID:        r.Intn(500) + 1,
 		Title:     fmt.Sprintf("sim-%d", r.Intn(1_000_000)),
 		Completed: r.Intn(2) == 0,
 	}
@@ -812,7 +1545,7 @@ func pickKnownOrRandomID(r *rand.Rand, m map[int]todo) int {
 			j++
 		}
 	}
-	return r.Intn(200) + 1
+	return r.Intn(500) + 1
 }
 
 func todoToMap(cfg config, t todo) map[string]any {
