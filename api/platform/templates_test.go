@@ -17,7 +17,7 @@ var testPrimaryStore *primarystore.Store
 
 // Schema for platform tables (templates, history, databases)
 const platformSchema = `
-CREATE TABLE atomicbase_schema_templates (
+CREATE TABLE atombase_schema_templates (
 	id INTEGER PRIMARY KEY,
 	name TEXT UNIQUE NOT NULL,
 	current_version INTEGER DEFAULT 1,
@@ -25,9 +25,9 @@ CREATE TABLE atomicbase_schema_templates (
 	updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE atomicbase_templates_history (
+CREATE TABLE atombase_templates_history (
 	id INTEGER PRIMARY KEY,
-	template_id INTEGER NOT NULL REFERENCES atomicbase_schema_templates(id),
+	template_id INTEGER NOT NULL REFERENCES atombase_schema_templates(id),
 	version INTEGER NOT NULL,
 	schema TEXT NOT NULL,
 	checksum TEXT NOT NULL,
@@ -35,15 +35,15 @@ CREATE TABLE atomicbase_templates_history (
 	UNIQUE(template_id, version)
 );
 
-CREATE TABLE atomicbase_databases (
+CREATE TABLE atombase_databases (
 	id INTEGER PRIMARY KEY,
 	name TEXT UNIQUE,
 	token TEXT,
-	template_id INTEGER REFERENCES atomicbase_schema_templates(id),
+	template_id INTEGER REFERENCES atombase_schema_templates(id),
 	template_version INTEGER DEFAULT 1
 );
 
-CREATE TABLE atomicbase_migrations (
+CREATE TABLE atombase_migrations (
 	id INTEGER PRIMARY KEY,
 	template_id INTEGER NOT NULL,
 	from_version INTEGER NOT NULL,
@@ -551,7 +551,7 @@ func TestCreateTemplate(t *testing.T) {
 
 	// Verify history entry was created
 	var historyCount int
-	err = conn.QueryRow("SELECT COUNT(*) FROM atomicbase_templates_history WHERE template_id = ?", template.ID).Scan(&historyCount)
+	err = conn.QueryRow("SELECT COUNT(*) FROM atombase_templates_history WHERE template_id = ?", template.ID).Scan(&historyCount)
 	if err != nil {
 		t.Fatalf("failed to query history: %v", err)
 	}
@@ -696,7 +696,7 @@ func TestDeleteTemplate(t *testing.T) {
 
 	// Verify history was also deleted
 	var historyCount int
-	err = conn.QueryRow("SELECT COUNT(*) FROM atomicbase_templates_history WHERE template_id = ?", created.ID).Scan(&historyCount)
+	err = conn.QueryRow("SELECT COUNT(*) FROM atombase_templates_history WHERE template_id = ?", created.ID).Scan(&historyCount)
 	if err != nil {
 		t.Fatalf("failed to query history: %v", err)
 	}
@@ -729,7 +729,7 @@ func TestDeleteTemplate_InUse(t *testing.T) {
 	}
 
 	// Create a database using this template
-	_, err = conn.Exec("INSERT INTO atomicbase_databases (name, template_id, template_version) VALUES (?, ?, 1)",
+	_, err = conn.Exec("INSERT INTO atombase_databases (name, template_id, template_version) VALUES (?, ?, 1)",
 		"test_tenant", template.ID)
 	if err != nil {
 		t.Fatalf("failed to create database: %v", err)
@@ -834,7 +834,7 @@ func TestGetTemplateHistory(t *testing.T) {
 
 	// Manually add more history entries for testing
 	_, err = conn.Exec(`
-		INSERT INTO atomicbase_templates_history (template_id, version, schema, checksum, created_at)
+		INSERT INTO atombase_templates_history (template_id, version, schema, checksum, created_at)
 		VALUES (?, 2, '{"tables":[]}', 'checksum2', datetime('now'))
 	`, template.ID)
 	if err != nil {

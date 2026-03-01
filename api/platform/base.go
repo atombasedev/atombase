@@ -16,11 +16,11 @@ type API struct {
 
 // Table names for internal platform tables.
 const (
-	TableTemplates         = "atomicbase_schema_templates"
-	TableTemplatesHistory  = "atomicbase_templates_history"
-	TableDatabases         = "atomicbase_databases"
-	TableMigrations        = "atomicbase_migrations"
-	TableMigrationFailures = "atomicbase_migration_failures"
+	TableTemplates         = "atombase_schema_templates"
+	TableTemplatesHistory  = "atombase_templates_history"
+	TableDatabases         = "atombase_databases"
+	TableMigrations        = "atombase_migrations"
+	TableMigrationFailures = "atombase_migration_failures"
 )
 
 // NewAPI builds a Platform API module using the shared primary metadata store.

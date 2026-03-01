@@ -800,7 +800,7 @@ func TestCreateMigration(t *testing.T) {
 	defer conn.Close()
 
 	// Create a template first (FK constraint)
-	_, err := conn.Exec(`INSERT INTO atomicbase_schema_templates (name) VALUES ('test')`)
+	_, err := conn.Exec(`INSERT INTO atombase_schema_templates (name) VALUES ('test')`)
 	if err != nil {
 		t.Fatalf("failed to create template: %v", err)
 	}
@@ -833,7 +833,7 @@ func TestGetMigration(t *testing.T) {
 	defer conn.Close()
 
 	// Create template and migration
-	_, err := conn.Exec(`INSERT INTO atomicbase_schema_templates (name) VALUES ('test')`)
+	_, err := conn.Exec(`INSERT INTO atombase_schema_templates (name) VALUES ('test')`)
 	if err != nil {
 		t.Fatalf("failed to create template: %v", err)
 	}
@@ -874,7 +874,7 @@ func TestUpdateMigrationStatus(t *testing.T) {
 	defer conn.Close()
 
 	// Create template and migration
-	_, err := conn.Exec(`INSERT INTO atomicbase_schema_templates (name) VALUES ('test')`)
+	_, err := conn.Exec(`INSERT INTO atombase_schema_templates (name) VALUES ('test')`)
 	if err != nil {
 		t.Fatalf("failed to create template: %v", err)
 	}
@@ -911,7 +911,7 @@ func TestStartMigration(t *testing.T) {
 	defer conn.Close()
 
 	// Create template and migration
-	_, err := conn.Exec(`INSERT INTO atomicbase_schema_templates (name) VALUES ('test')`)
+	_, err := conn.Exec(`INSERT INTO atombase_schema_templates (name) VALUES ('test')`)
 	if err != nil {
 		t.Fatalf("failed to create template: %v", err)
 	}
