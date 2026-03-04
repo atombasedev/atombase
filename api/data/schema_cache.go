@@ -2,21 +2,22 @@ package data
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 
 	"github.com/atombasedev/atombase/tools"
 )
 
-func init() {
-	tools.RegisterMemoryCacheType(SchemaCache{})
-}
-
 // GetCachedTemplate retrieves the current schema and version for a template.
 func GetCachedTemplate(db *sql.DB, templateID int32) (SchemaCache, int, error) {
 	// Check cache first
 	if cached, ok := tools.GetTemplate(templateID); ok {
-		return cached.Schema.(SchemaCache), cached.Version, nil
+		var schema SchemaCache
+		if err := json.Unmarshal(cached.SchemaJSON, &schema); err == nil {
+			return schema, cached.Version, nil
+		}
+		// If unmarshal fails, fall through to reload from DB
 	}
 
 	// Load from database and cache

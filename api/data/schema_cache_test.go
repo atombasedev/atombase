@@ -1,10 +1,16 @@
 package data
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/atombasedev/atombase/tools"
 )
+
+func init() {
+	// Initialize cache for tests
+	tools.InitCache(tools.NewMemoryCache())
+}
 
 // Test fixtures for schema cache
 var (
@@ -144,7 +150,10 @@ func TestSchemaCache_StoreAndRetrieve(t *testing.T) {
 		t.Errorf("expected version 1, got %d", cached.Version)
 	}
 
-	retrieved := cached.Schema.(SchemaCache)
+	var retrieved SchemaCache
+	if err := json.Unmarshal(cached.SchemaJSON, &retrieved); err != nil {
+		t.Fatalf("failed to unmarshal schema: %v", err)
+	}
 	if len(retrieved.Tables) != 1 {
 		t.Errorf("expected 1 table, got %d", len(retrieved.Tables))
 	}

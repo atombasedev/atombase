@@ -686,7 +686,7 @@ func (api *API) getMigration(ctx context.Context, id int64) (*Migration, error) 
 		&m.Status, &createdAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, ErrMigrationNotFound
+			return nil, tools.ErrMigrationNotFound
 		}
 		return nil, err
 	}

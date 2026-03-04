@@ -104,9 +104,10 @@ func main() {
 	if err := tools.InitActivityLogger(); err != nil {
 		log.Fatalf("Failed to initialize activity logger: %v", err)
 	}
-	if err := tools.LoadMemoryCache(); err != nil {
-		log.Printf("Warning: failed to load memory cache: %v", err)
-	}
+
+	// Initialize cache (memory for now, Redis later)
+	appCache := tools.NewMemoryCache()
+	tools.InitCache(appCache)
 
 	primaryDB, err := initPrimaryDB()
 	if err != nil {
@@ -185,9 +186,9 @@ func main() {
 	if err := server.Shutdown(context.Background()); err != nil {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
-	if err := tools.SaveMemoryCache(); err != nil {
-		log.Printf("Warning: failed to save memory cache: %v", err)
-	}
+
+	// Close cache
+	appCache.Close()
 
 	// Close database connections
 	if err := primaryStore.Close(); err != nil {
