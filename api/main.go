@@ -85,8 +85,7 @@ func logStartupInfo() {
 	}
 
 	if config.Cfg.ActivityLogEnabled {
-		fmt.Printf("[OK]   Activity logging: %s (retention: %d days)\n",
-			config.Cfg.ActivityLogPath, config.Cfg.ActivityLogRetention)
+		fmt.Println("[OK]   Activity logging: stdout")
 	} else {
 		fmt.Println("[INFO] Activity logging disabled")
 	}

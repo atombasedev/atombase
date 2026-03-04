@@ -34,7 +34,7 @@ func generateRequestID() string {
 
 // LoggingMiddleware logs all HTTP requests with structured JSON output.
 // Logs: method, path, status, duration, client IP, and request ID.
-// Also logs to activity database if activity logging is enabled.
+// Also logs activity records to stdout if activity logging is enabled.
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -72,7 +72,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 			"user_agent", r.UserAgent(),
 		)
 
-		// Log to activity database
+		// Log activity record
 		LogActivity(
 			detectAPIType(r.URL.Path),
 			r.Method,
@@ -193,6 +193,41 @@ func respondUnauthorized(w http.ResponseWriter, msg string) {
 func AuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
+		isPlatform := strings.HasPrefix(r.URL.Path, "/platform")
+
+		if isPlatform {
+			if auth == "" {
+				respondUnauthorized(w, "service key required")
+				return
+			}
+
+			if len(auth) < 8 || !strings.EqualFold(auth[:7], "Bearer ") {
+				respondUnauthorized(w, "invalid authorization format")
+				return
+			}
+
+			token := auth[7:]
+			if !strings.HasPrefix(token, "service.") {
+				respondUnauthorized(w, "service key required")
+				return
+			}
+
+			apiKey := config.Cfg.APIKey
+			if apiKey == "" {
+				respondUnauthorized(w, "service authentication not configured")
+				return
+			}
+
+			secret := strings.TrimPrefix(token, "service.")
+			if subtle.ConstantTimeCompare([]byte(secret), []byte(apiKey)) != 1 {
+				respondUnauthorized(w, "invalid service key")
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), authContextKey{}, AuthContext{Role: RoleService})
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 
 		// No auth header - anonymous access
 		if auth == "" {
