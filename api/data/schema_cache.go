@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 
 	"github.com/atombasedev/atombase/tools"
 )
@@ -106,37 +105,3 @@ func TablesToSchemaCache(tables []Table) SchemaCache {
 	return cache
 }
 
-// PreloadSchemaCache loads current schema versions into cache.
-func PreloadSchemaCache(db *sql.DB) error {
-	rows, err := db.Query(fmt.Sprintf(`
-		SELECT h.template_id, h.version, h.schema
-		FROM %s h
-		JOIN %s t ON h.template_id = t.id AND h.version = t.current_version
-	`, ReservedTableTemplatesHistory, ReservedTableTemplates))
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var templateID int32
-		var version int
-		var tablesData []byte
-
-		if err := rows.Scan(&templateID, &version, &tablesData); err != nil {
-			return err
-		}
-
-		var schema struct {
-			Tables []Table `json:"tables"`
-		}
-		if err := tools.DecodeSchema(tablesData, &schema); err != nil {
-			log.Printf("Warning: failed to decode schema cache for template %d version %d: %v", templateID, version, err)
-			continue
-		}
-
-		tools.SetTemplate(templateID, version, TablesToSchemaCache(schema.Tables))
-	}
-
-	return rows.Err()
-}

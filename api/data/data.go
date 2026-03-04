@@ -1,14 +1,11 @@
 package data
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/gob"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 
 	"github.com/atombasedev/atombase/config"
 	"github.com/atombasedev/atombase/primarystore"
@@ -22,11 +19,8 @@ func NewAPI(primaryStore *primarystore.Store) (*API, error) {
 		return nil, errors.New("nil primary store")
 	}
 
-	// Preload template schemas into cache.
-	if err := PreloadSchemaCache(primaryStore.DB()); err != nil {
-		// Non-fatal - cache will be populated on demand.
-		log.Printf("Warning: failed to preload schema cache: %v", err)
-	}
+	// Schema cache is populated lazily via GetCachedTemplate.
+	// No preloading needed - external cache (Redis) persists across restarts.
 
 	return &API{store: primaryStore}, nil
 }
@@ -174,14 +168,3 @@ func (dao *Database) QueryJSON(ctx context.Context, query string, args ...any) (
 	return json.Marshal(&m)
 }
 
-// LoadSchema deserializes a SchemaCache from gob-encoded bytes.
-func LoadSchema(data []byte) (SchemaCache, error) {
-	buf := bytes.NewBuffer(data)
-	dec := gob.NewDecoder(buf)
-
-	var schema SchemaCache
-
-	err := dec.Decode(&schema)
-
-	return schema, err
-}
