@@ -105,8 +105,23 @@ func main() {
 		log.Fatalf("Failed to initialize activity logger: %v", err)
 	}
 
-	// Initialize cache (memory for now, Redis later)
-	appCache := tools.NewMemoryCache()
+	// Initialize cache (Redis if configured, otherwise in-memory)
+	var appCache tools.Cache
+	if config.Cfg.CacheRedisURL != "" {
+		redisCache, err := tools.NewRedisCache(
+			config.Cfg.CacheRedisURL,
+			config.Cfg.CacheRedisPassword,
+			config.Cfg.CacheKeyPrefix,
+		)
+		if err != nil {
+			log.Fatalf("Failed to connect to Redis cache: %v", err)
+		}
+		appCache = redisCache
+		fmt.Println("[OK]   Cache: Redis")
+	} else {
+		appCache = tools.NewMemoryCache()
+		fmt.Println("[INFO] Cache: in-memory (no Redis configured)")
+	}
 	tools.InitCache(appCache)
 
 	primaryDB, err := initPrimaryDB()

@@ -33,6 +33,11 @@ type Config struct {
 	ActivityLogEnabled   bool   // Whether activity logging is enabled
 	ActivityLogPath      string // Path to activity log database
 	ActivityLogRetention int    // Days to retain logs (0 = forever)
+
+	// Cache configuration (Redis)
+	CacheRedisURL      string // Redis connection URL (empty = use in-memory cache)
+	CacheRedisPassword string // Redis auth password
+	CacheKeyPrefix     string // Key prefix for cache entries (e.g., "atomhost:instance:myapp:")
 }
 
 // Cfg is the global configuration instance, loaded at startup.
@@ -110,6 +115,11 @@ func Load() Config {
 		ActivityLogEnabled:   strings.ToLower(os.Getenv("ATOMICBASE_ACTIVITY_LOG_ENABLED")) == "true",
 		ActivityLogPath:      getEnv("ATOMICBASE_ACTIVITY_LOG_PATH", "atomicdata/logs.db"),
 		ActivityLogRetention: parseIntEnv("ATOMICBASE_ACTIVITY_LOG_RETENTION", 30),
+
+		// Cache configuration
+		CacheRedisURL:      os.Getenv("CACHE_REDIS_URL"),
+		CacheRedisPassword: os.Getenv("CACHE_REDIS_PASSWORD"),
+		CacheKeyPrefix:     os.Getenv("CACHE_KEY_PREFIX"),
 	}
 }
 
