@@ -150,10 +150,20 @@ func TestSchemaCache_StoreAndRetrieve(t *testing.T) {
 		t.Errorf("expected version 1, got %d", cached.Version)
 	}
 
+	// In-memory cache stores struct directly, external cache uses SchemaJSON
 	var retrieved SchemaCache
-	if err := json.Unmarshal(cached.SchemaJSON, &retrieved); err != nil {
-		t.Fatalf("failed to unmarshal schema: %v", err)
+	if cached.Schema != nil {
+		// Fast path: in-memory cache stores struct directly
+		retrieved = cached.Schema.(SchemaCache)
+	} else if len(cached.SchemaJSON) > 0 {
+		// External cache: deserialize from JSON
+		if err := json.Unmarshal(cached.SchemaJSON, &retrieved); err != nil {
+			t.Fatalf("failed to unmarshal schema: %v", err)
+		}
+	} else {
+		t.Fatal("expected either Schema or SchemaJSON to be populated")
 	}
+
 	if len(retrieved.Tables) != 1 {
 		t.Errorf("expected 1 table, got %d", len(retrieved.Tables))
 	}

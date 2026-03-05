@@ -13,7 +13,8 @@ import (
 type Config struct {
 	ApiURL         string
 	Port           string   // HTTP server port (e.g., ":8080")
-	PrimaryDBPath  string   // Path to primary SQLite database file
+	PrimaryDBName  string   // Turso database name for external primary DB (empty = use local SQLite)
+	PrimaryDBPath  string   // Path to local SQLite database file (fallback when PrimaryDBName is empty)
 	DataDir        string   // Directory for storing database files
 	MaxRequestBody int64    // Maximum request body size in bytes
 	APIKey         string   // API key for authentication (empty disables auth)
@@ -23,7 +24,7 @@ type Config struct {
 	MaxQueryLimit  int      // Maximum rows per query (default 1000, 0 = unlimited)
 	DefaultLimit   int      // Default limit when not specified (default 100, 0 = unlimited)
 
-	// Turso configuration (for multi-tenant external databases)
+	// Turso configuration (for external databases)
 	TursoOrganization   string // Turso organization name
 	TursoAPIKey         string // Turso API key for management operations
 	TursoGroup          string // Turso group name (default: "default")
@@ -34,10 +35,15 @@ type Config struct {
 	ActivityLogPath      string // Path to activity log database
 	ActivityLogRetention int    // Days to retain logs (0 = forever)
 
-	// Cache configuration (Redis)
-	CacheRedisURL      string // Redis connection URL (empty = use in-memory cache)
+	// Cache configuration
+	// Priority: Redis > SQLite > in-memory
+	CacheRedisURL      string // Redis connection URL (empty = try SQLite or in-memory)
 	CacheRedisPassword string // Redis auth password
+	CacheSQLitePath    string // SQLite cache path for LiteFS (e.g., "/litefs/cache.db")
 	CacheKeyPrefix     string // Key prefix for cache entries (e.g., "atomhost:instance:myapp:")
+
+	// Startup behavior
+	InitSchema bool // Run schema initialization on startup (default: false for fast cold starts)
 }
 
 // Cfg is the global configuration instance, loaded at startup.
@@ -96,6 +102,7 @@ func Load() Config {
 	return Config{
 		ApiURL:         getEnv("API_URL", "http://localhost:8080"),
 		Port:           getEnv("PORT", ":8080"),
+		PrimaryDBName:  os.Getenv("PRIMARY_DB_NAME"),
 		PrimaryDBPath:  getEnv("DB_PATH", "atomicdata/primary.db"),
 		DataDir:        getEnv("DATA_DIR", "atomicdata"),
 		MaxRequestBody: 1 << 20, // 1MB
@@ -119,7 +126,11 @@ func Load() Config {
 		// Cache configuration
 		CacheRedisURL:      os.Getenv("CACHE_REDIS_URL"),
 		CacheRedisPassword: os.Getenv("CACHE_REDIS_PASSWORD"),
+		CacheSQLitePath:    os.Getenv("CACHE_SQLITE_PATH"),
 		CacheKeyPrefix:     os.Getenv("CACHE_KEY_PREFIX"),
+
+		// Startup behavior
+		InitSchema: strings.ToLower(os.Getenv("INIT_SCHEMA")) == "true",
 	}
 }
 

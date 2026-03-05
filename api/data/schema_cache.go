@@ -12,11 +12,20 @@ import (
 func GetCachedTemplate(db *sql.DB, templateID int32) (SchemaCache, int, error) {
 	// Check cache first
 	if cached, ok := tools.GetTemplate(templateID); ok {
-		var schema SchemaCache
-		if err := json.Unmarshal(cached.SchemaJSON, &schema); err == nil {
-			return schema, cached.Version, nil
+		// Fast path: in-memory cache stores struct directly
+		if cached.Schema != nil {
+			if schema, ok := cached.Schema.(SchemaCache); ok {
+				return schema, cached.Version, nil
+			}
 		}
-		// If unmarshal fails, fall through to reload from DB
+		// External cache: deserialize from JSON
+		if len(cached.SchemaJSON) > 0 {
+			var schema SchemaCache
+			if err := json.Unmarshal(cached.SchemaJSON, &schema); err == nil {
+				return schema, cached.Version, nil
+			}
+		}
+		// If both fail, fall through to reload from DB
 	}
 
 	// Load from database and cache

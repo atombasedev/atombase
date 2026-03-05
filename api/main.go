@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/atombasedev/atombase/auth"
 	"github.com/atombasedev/atombase/config"
@@ -18,6 +19,7 @@ import (
 	"github.com/atombasedev/atombase/primarystore"
 	"github.com/atombasedev/atombase/tools"
 	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/tursodatabase/libsql-client-go/libsql"
 )
 
 //go:embed schema.sql
@@ -33,7 +35,53 @@ PRAGMA foreign_keys = ON;
 PRAGMA journal_size_limit = 200000000;
 `
 
+// initPrimaryDB initializes the primary database connection.
+// Uses external Turso database if PRIMARY_DB_NAME is set, otherwise local SQLite.
 func initPrimaryDB() (*sql.DB, error) {
+	// External Turso database
+	if config.Cfg.PrimaryDBName != "" {
+		return initPrimaryDBTurso()
+	}
+
+	// Local SQLite database
+	return initPrimaryDBLocal()
+}
+
+func initPrimaryDBTurso() (*sql.DB, error) {
+	org := config.Cfg.TursoOrganization
+	token := config.Cfg.TursoGroupAuthToken
+	dbName := config.Cfg.PrimaryDBName
+
+	if org == "" {
+		return nil, fmt.Errorf("TURSO_ORGANIZATION is required when PRIMARY_DB_NAME is set")
+	}
+	if token == "" {
+		return nil, fmt.Errorf("TURSO_GROUP_AUTH_TOKEN is required when PRIMARY_DB_NAME is set")
+	}
+
+	connStr := fmt.Sprintf("libsql://%s-%s.turso.io?authToken=%s", dbName, org, token)
+	conn, err := sql.Open("libsql", connStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open Turso connection: %w", err)
+	}
+
+	if err := conn.Ping(); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("failed to ping Turso database: %w", err)
+	}
+
+	// Initialize schema only if INIT_SCHEMA=true (skip for fast cold starts)
+	if config.Cfg.InitSchema {
+		if _, err := conn.Exec(primarySchemaSQL); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("failed to initialize schema: %w", err)
+		}
+	}
+
+	return conn, nil
+}
+
+func initPrimaryDBLocal() (*sql.DB, error) {
 	if err := os.MkdirAll(config.Cfg.DataDir, os.ModePerm); err != nil {
 		return nil, err
 	}
@@ -53,9 +101,12 @@ func initPrimaryDB() (*sql.DB, error) {
 		return nil, err
 	}
 
-	if _, err := conn.Exec(primarySchemaSQL); err != nil {
-		_ = conn.Close()
-		return nil, err
+	// Initialize schema only if INIT_SCHEMA=true (skip for fast cold starts)
+	if config.Cfg.InitSchema {
+		if _, err := conn.Exec(primarySchemaSQL); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
 	}
 
 	return conn, nil
@@ -64,7 +115,11 @@ func initPrimaryDB() (*sql.DB, error) {
 func logStartupInfo() {
 	fmt.Println("=== Atomicbase ===")
 	fmt.Printf("Port:            %s\n", config.Cfg.Port)
-	fmt.Printf("Database:        %s\n", config.Cfg.PrimaryDBPath)
+	if config.Cfg.PrimaryDBName != "" {
+		fmt.Printf("Primary DB:      %s (Turso)\n", config.Cfg.PrimaryDBName)
+	} else {
+		fmt.Printf("Primary DB:      %s (local)\n", config.Cfg.PrimaryDBPath)
+	}
 	fmt.Printf("Request timeout: %ds\n", config.Cfg.RequestTimeout)
 	fmt.Printf("Query depth:     %d max\n", config.Cfg.MaxQueryDepth)
 	fmt.Printf("Pagination:      %d default, %d max\n", config.Cfg.DefaultLimit, config.Cfg.MaxQueryLimit)
@@ -105,7 +160,7 @@ func main() {
 		log.Fatalf("Failed to initialize activity logger: %v", err)
 	}
 
-	// Initialize cache (Redis if configured, otherwise in-memory)
+	// Initialize cache (priority: Redis > SQLite/LiteFS > in-memory)
 	var appCache tools.Cache
 	if config.Cfg.CacheRedisURL != "" {
 		redisCache, err := tools.NewRedisCache(
@@ -118,9 +173,19 @@ func main() {
 		}
 		appCache = redisCache
 		fmt.Println("[OK]   Cache: Redis")
+	} else if config.Cfg.CacheSQLitePath != "" {
+		sqliteCache, err := tools.NewSQLiteCache(
+			config.Cfg.CacheSQLitePath,
+			config.Cfg.CacheKeyPrefix,
+		)
+		if err != nil {
+			log.Fatalf("Failed to open SQLite cache: %v", err)
+		}
+		appCache = sqliteCache
+		fmt.Printf("[OK]   Cache: SQLite (%s)\n", config.Cfg.CacheSQLitePath)
 	} else {
 		appCache = tools.NewMemoryCache()
-		fmt.Println("[INFO] Cache: in-memory (no Redis configured)")
+		fmt.Println("[INFO] Cache: in-memory")
 	}
 	tools.InitCache(appCache)
 
@@ -155,12 +220,6 @@ func main() {
 
 	// Health check
 	app.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		if err := primaryDB.PingContext(r.Context()); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte(`{"status":"unhealthy","error":"database ping failed"}`))
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"healthy"}`))
@@ -198,8 +257,12 @@ func main() {
 
 	fmt.Println("\nShutting down server...")
 
-	if err := server.Shutdown(context.Background()); err != nil {
-		log.Fatalf("Server forced to shutdown: %v", err)
+	// Give in-flight requests 5 seconds to complete (Fly allows ~10s before SIGKILL)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("Server forced to shutdown: %v", err)
 	}
 
 	// Close cache
