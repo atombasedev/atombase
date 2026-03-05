@@ -28,14 +28,9 @@ func NewAPI(primaryStore *primarystore.Store) (*API, error) {
 // connTurso opens a connection to an external Turso database by name.
 func (api *API) connTurso(dbName string) (Database, error) {
 	org := config.Cfg.TursoOrganization
-	token := config.Cfg.TursoGroupAuthToken
 
 	if org == "" {
 		return Database{}, errors.New("TURSO_ORGANIZATION environment variable is not set but is required to access external databases")
-	}
-
-	if token == "" {
-		return Database{}, errors.New("TURSO_GROUP_AUTH_TOKEN environment variable is not set but is required to access external databases")
 	}
 
 	if api == nil || api.store == nil || api.store.DB() == nil {
@@ -47,13 +42,17 @@ func (api *API) connTurso(dbName string) (Database, error) {
 		return Database{}, err
 	}
 
+	if meta.AuthToken == "" {
+		return Database{}, errors.New("database has no auth token configured")
+	}
+
 	// Get cached template (schema + current version).
 	schema, currentVersion, err := GetCachedTemplate(api.store.DB(), meta.TemplateID)
 	if err != nil {
 		return Database{}, fmt.Errorf("failed to load schema: %w", err)
 	}
 
-	client, err := sql.Open("libsql", fmt.Sprintf("libsql://%s-%s.turso.io?authToken=%s", dbName, org, token))
+	client, err := sql.Open("libsql", fmt.Sprintf("libsql://%s-%s.turso.io?authToken=%s", dbName, org, meta.AuthToken))
 	if err != nil {
 		return Database{}, err
 	}

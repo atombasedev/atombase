@@ -49,14 +49,14 @@ func initPrimaryDB() (*sql.DB, error) {
 
 func initPrimaryDBTurso() (*sql.DB, error) {
 	org := config.Cfg.TursoOrganization
-	token := config.Cfg.TursoGroupAuthToken
+	token := config.Cfg.PrimaryDBToken
 	dbName := config.Cfg.PrimaryDBName
 
 	if org == "" {
 		return nil, fmt.Errorf("TURSO_ORGANIZATION is required when PRIMARY_DB_NAME is set")
 	}
 	if token == "" {
-		return nil, fmt.Errorf("TURSO_GROUP_AUTH_TOKEN is required when PRIMARY_DB_NAME is set")
+		return nil, fmt.Errorf("PRIMARY_DB_TOKEN is required when PRIMARY_DB_NAME is set")
 	}
 
 	connStr := fmt.Sprintf("libsql://%s-%s.turso.io?authToken=%s", dbName, org, token)
@@ -158,6 +158,11 @@ func main() {
 	// Initialize activity logger if enabled
 	if err := tools.InitActivityLogger(); err != nil {
 		log.Fatalf("Failed to initialize activity logger: %v", err)
+	}
+
+	// Initialize encryption for database tokens
+	if err := tools.InitEncryption(config.Cfg.TokenEncryptionKey); err != nil {
+		log.Fatalf("Failed to initialize encryption: %v", err)
 	}
 
 	// Initialize cache (priority: Redis > SQLite/LiteFS > in-memory)

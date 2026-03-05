@@ -19,9 +19,10 @@ type CachedTemplate struct {
 
 // CachedDatabase holds database metadata.
 type CachedDatabase struct {
-	ID              int32 `json:"id"`
-	TemplateID      int32 `json:"template_id"`
-	DatabaseVersion int   `json:"version"`
+	ID              int32  `json:"id"`
+	TemplateID      int32  `json:"template_id"`
+	DatabaseVersion int    `json:"version"`
+	AuthToken       string `json:"-"` // Decrypted token, in-memory only (not serialized to external cache)
 }
 
 // Global cache instance

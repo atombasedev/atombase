@@ -16,6 +16,7 @@ type DatabaseMeta struct {
 	ID              int32
 	TemplateID      int32
 	DatabaseVersion int
+	AuthToken       string // Decrypted auth token for this database
 }
 
 // TemplateMigration is a migration step for a template version range.
@@ -41,7 +42,7 @@ func New(conn *sql.DB) (*Store, error) {
 	}
 
 	lookupStmt, err := conn.Prepare(fmt.Sprintf(
-		"SELECT id, COALESCE(template_id, 0), COALESCE(template_version, 1) FROM %s WHERE name = ?",
+		"SELECT id, COALESCE(template_id, 0), COALESCE(template_version, 1), auth_token_encrypted FROM %s WHERE name = ?",
 		"atombase_databases",
 	))
 	if err != nil {
@@ -79,6 +80,7 @@ func (s *Store) LookupDatabaseByName(name string) (DatabaseMeta, error) {
 			ID:              cached.ID,
 			TemplateID:      cached.TemplateID,
 			DatabaseVersion: cached.DatabaseVersion,
+			AuthToken:       cached.AuthToken,
 		}, nil
 	}
 
@@ -91,8 +93,9 @@ func (s *Store) LookupDatabaseByName(name string) (DatabaseMeta, error) {
 	var id sql.NullInt32
 	var templateID int32
 	var databaseVersion int
+	var authTokenEncrypted []byte
 
-	err := row.Scan(&id, &templateID, &databaseVersion)
+	err := row.Scan(&id, &templateID, &databaseVersion, &authTokenEncrypted)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return DatabaseMeta{}, tools.ErrDatabaseNotFound
@@ -100,17 +103,29 @@ func (s *Store) LookupDatabaseByName(name string) (DatabaseMeta, error) {
 		return DatabaseMeta{}, err
 	}
 
+	// Decrypt auth token
+	var authToken string
+	if len(authTokenEncrypted) > 0 && tools.EncryptionEnabled() {
+		decrypted, err := tools.Decrypt(authTokenEncrypted)
+		if err != nil {
+			return DatabaseMeta{}, fmt.Errorf("failed to decrypt auth token: %w", err)
+		}
+		authToken = string(decrypted)
+	}
+
 	meta := DatabaseMeta{
 		ID:              id.Int32,
 		TemplateID:      templateID,
 		DatabaseVersion: databaseVersion,
+		AuthToken:       authToken,
 	}
 
-	// Cache the result
+	// Cache the result (with decrypted token in memory)
 	tools.SetDatabase(name, tools.CachedDatabase{
 		ID:              meta.ID,
 		TemplateID:      meta.TemplateID,
 		DatabaseVersion: meta.DatabaseVersion,
+		AuthToken:       meta.AuthToken,
 	})
 
 	return meta, nil

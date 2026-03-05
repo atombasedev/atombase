@@ -237,8 +237,15 @@ func (api *API) handleMigrateTemplate(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	if len(databases) > 0 {
+		// Get token for test database
+		token, err := api.getDatabaseToken(ctx, databases[0].Name)
+		if err != nil {
+			tools.RespErr(w, fmt.Errorf("failed to get token for test database: %w", err))
+			return
+		}
+
 		execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err := BatchExecute(execCtx, databases[0].Name, plan.SQL)
+		err = BatchExecuteWithToken(execCtx, databases[0].Name, token, plan.SQL)
 		cancel()
 		if err != nil {
 			respondJSON(w, http.StatusBadRequest, tools.APIError{

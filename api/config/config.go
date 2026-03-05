@@ -25,10 +25,11 @@ type Config struct {
 	DefaultLimit   int      // Default limit when not specified (default 100, 0 = unlimited)
 
 	// Turso configuration (for external databases)
-	TursoOrganization   string // Turso organization name
-	TursoAPIKey         string // Turso API key for management operations
-	TursoGroup          string // Turso group name (default: "default")
-	TursoGroupAuthToken string // Auth token for the Turso group (required when Turso is enabled)
+	TursoOrganization  string // Turso organization name
+	TursoAPIKey        string // Turso API key for management operations
+	TursoGroup         string // Turso group name (default: "default")
+	PrimaryDBToken     string // Auth token for the primary Turso database (when using external primary)
+	TokenEncryptionKey string // 32-byte hex key for encrypting database tokens at rest
 
 	// Activity logging
 	ActivityLogEnabled   bool   // Whether activity logging is enabled
@@ -55,8 +56,8 @@ func init() {
 	Cfg = Load()
 
 	// Validate required Turso configuration
-	if Cfg.TursoOrganization != "" && Cfg.TursoGroupAuthToken == "" {
-		panic("TURSO_GROUP_AUTH_TOKEN is required when TURSO_ORGANIZATION is set")
+	if Cfg.TursoOrganization != "" && Cfg.TokenEncryptionKey == "" {
+		panic("TOKEN_ENCRYPTION_KEY is required when TURSO_ORGANIZATION is set")
 	}
 }
 
@@ -114,10 +115,11 @@ func Load() Config {
 		DefaultLimit:   defaultLimit,
 
 		// Turso configuration
-		TursoOrganization:   os.Getenv("TURSO_ORGANIZATION"),
-		TursoAPIKey:         os.Getenv("TURSO_API_KEY"),
-		TursoGroup:          getEnv("TURSO_GROUP", "default"),
-		TursoGroupAuthToken: os.Getenv("TURSO_GROUP_AUTH_TOKEN"),
+		TursoOrganization:  os.Getenv("TURSO_ORGANIZATION"),
+		TursoAPIKey:        os.Getenv("TURSO_API_KEY"),
+		TursoGroup:         getEnv("TURSO_GROUP", "default"),
+		PrimaryDBToken:     os.Getenv("PRIMARY_DB_TOKEN"),
+		TokenEncryptionKey: os.Getenv("TOKEN_ENCRYPTION_KEY"),
 
 		ActivityLogEnabled:   strings.ToLower(os.Getenv("ATOMICBASE_ACTIVITY_LOG_ENABLED")) == "true",
 		ActivityLogPath:      getEnv("ATOMICBASE_ACTIVITY_LOG_PATH", "atomicdata/logs.db"),

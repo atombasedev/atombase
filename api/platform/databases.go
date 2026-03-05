@@ -92,6 +92,47 @@ func (api *API) getDatabase(ctx context.Context, name string) (*Database, error)
 	return &t, nil
 }
 
+// getDatabaseToken retrieves the decrypted auth token for a database.
+// Checks cache first, falls back to database lookup with decryption.
+func (api *API) getDatabaseToken(ctx context.Context, name string) (string, error) {
+	// Check cache first
+	if cached, ok := tools.GetDatabase(name); ok && cached.AuthToken != "" {
+		return cached.AuthToken, nil
+	}
+
+	// Fall back to database query
+	conn, err := api.dbConn()
+	if err != nil {
+		return "", err
+	}
+
+	var encryptedToken []byte
+	err = conn.QueryRowContext(ctx, fmt.Sprintf(`
+		SELECT auth_token_encrypted FROM %s WHERE name = ?
+	`, TableDatabases), name).Scan(&encryptedToken)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrDatabaseNotFound
+		}
+		return "", err
+	}
+
+	if len(encryptedToken) == 0 {
+		return "", fmt.Errorf("database has no auth token configured")
+	}
+
+	if !tools.EncryptionEnabled() {
+		return "", fmt.Errorf("encryption not initialized")
+	}
+
+	decrypted, err := tools.Decrypt(encryptedToken)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt token: %w", err)
+	}
+
+	return string(decrypted), nil
+}
+
 // createDatabase creates a new database using the specified template.
 // Creates a Turso database, generates a token, and initializes the schema.
 func (api *API) createDatabase(ctx context.Context, name, templateName string) (*Database, error) {
@@ -123,6 +164,23 @@ func (api *API) createDatabase(ctx context.Context, name, templateName string) (
 		return nil, fmt.Errorf("failed to create turso database: %w", err)
 	}
 
+	// Create auth token for the database
+	token, err := tursoCreateToken(ctx, name)
+	if err != nil {
+		_ = tursodeleteDatabase(ctx, name)
+		return nil, fmt.Errorf("failed to create database token: %w", err)
+	}
+
+	// Encrypt the token
+	var encryptedToken []byte
+	if tools.EncryptionEnabled() {
+		encryptedToken, err = tools.Encrypt([]byte(token))
+		if err != nil {
+			_ = tursodeleteDatabase(ctx, name)
+			return nil, fmt.Errorf("failed to encrypt database token: %w", err)
+		}
+	}
+
 	// Initialize database with template schema
 	// Retry with backoff since newly created Turso databases may not be immediately available
 	migrationSQL := generateSchemaSQL(template.Schema)
@@ -131,7 +189,7 @@ func (api *API) createDatabase(ctx context.Context, name, templateName string) (
 		if attempt > 0 {
 			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
 		}
-		schemaErr = BatchExecute(ctx, name, migrationSQL)
+		schemaErr = BatchExecuteWithToken(ctx, name, token, migrationSQL)
 		if schemaErr == nil {
 			break
 		}
@@ -149,9 +207,9 @@ func (api *API) createDatabase(ctx context.Context, name, templateName string) (
 	// Insert database record
 	now := time.Now().UTC().Format(time.RFC3339)
 	result, err := conn.ExecContext(ctx, fmt.Sprintf(`
-		INSERT INTO %s (name, template_id, template_version, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?)
-	`, TableDatabases), name, template.ID, template.CurrentVersion, now, now)
+		INSERT INTO %s (name, template_id, template_version, auth_token_encrypted, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, TableDatabases), name, template.ID, template.CurrentVersion, encryptedToken, now, now)
 	if err != nil {
 		// Try to clean up
 		_ = tursodeleteDatabase(ctx, name)
@@ -244,6 +302,12 @@ func (api *API) syncDatabase(ctx context.Context, name string) (*SyncDatabaseRes
 
 	fromVersion := database.TemplateVersion
 
+	// Get auth token for this database
+	token, err := api.getDatabaseToken(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database token: %w", err)
+	}
+
 	// Collect all migration SQL from database's version to current
 	var allSQL []string
 	for v := database.TemplateVersion; v < currentVersion; v++ {
@@ -256,7 +320,7 @@ func (api *API) syncDatabase(ctx context.Context, name string) (*SyncDatabaseRes
 
 	// Execute all migrations
 	if len(allSQL) > 0 {
-		if err := BatchExecute(ctx, database.Name, allSQL); err != nil {
+		if err := BatchExecuteWithToken(ctx, database.Name, token, allSQL); err != nil {
 			return nil, fmt.Errorf("migration failed: %w", err)
 		}
 	}
@@ -633,4 +697,47 @@ func tursodeleteDatabase(ctx context.Context, name string) error {
 	}
 
 	return nil
+}
+
+// tursoCreateToken creates an auth token for a Turso database.
+func tursoCreateToken(ctx context.Context, name string) (string, error) {
+	org := config.Cfg.TursoOrganization
+	apiKey := config.Cfg.TursoAPIKey
+	if org == "" || apiKey == "" {
+		return "", fmt.Errorf("TURSO_ORGANIZATION and TURSO_API_KEY must be set")
+	}
+
+	url := fmt.Sprintf("https://api.turso.tech/v1/organizations/%s/databases/%s/auth/tokens", org, name)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var respBody bytes.Buffer
+	respBody.ReadFrom(resp.Body)
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("turso API error: %s - %s", resp.Status, respBody.String())
+	}
+
+	var tokenResp struct {
+		Jwt string `json:"jwt"`
+	}
+	if err := json.Unmarshal(respBody.Bytes(), &tokenResp); err != nil {
+		return "", fmt.Errorf("failed to parse turso token response: %w", err)
+	}
+
+	if tokenResp.Jwt == "" {
+		return "", fmt.Errorf("turso returned empty token")
+	}
+
+	return tokenResp.Jwt, nil
 }

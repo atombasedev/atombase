@@ -19,6 +19,7 @@ const (
 			name TEXT UNIQUE NOT NULL,
 			template_id INTEGER,
 			template_version INTEGER,
+			auth_token_encrypted BLOB,
 			updated_at TEXT NOT NULL
 		)
 	`

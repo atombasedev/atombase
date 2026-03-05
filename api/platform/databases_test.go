@@ -62,9 +62,9 @@ func setupTenantTestDB(t *testing.T) *sql.DB {
 		CREATE TABLE IF NOT EXISTS ` + TableDatabases + ` (
 			id INTEGER PRIMARY KEY,
 			name TEXT UNIQUE NOT NULL,
-			token TEXT NOT NULL,
 			template_id INTEGER NOT NULL,
 			template_version INTEGER NOT NULL,
+			auth_token_encrypted BLOB,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)
@@ -168,8 +168,8 @@ func insertTestTenant(t *testing.T, testDB *sql.DB, name string, templateID int3
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	result, err := testDB.Exec(`
-		INSERT INTO `+TableDatabases+` (name, token, template_id, template_version, created_at, updated_at)
-		VALUES (?, 'test-token', ?, ?, ?, ?)
+		INSERT INTO `+TableDatabases+` (name, template_id, template_version, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?)
 	`, name, templateID, version, now, now)
 	if err != nil {
 		t.Fatalf("failed to insert database: %v", err)

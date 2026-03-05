@@ -38,9 +38,9 @@ CREATE TABLE atombase_templates_history (
 CREATE TABLE atombase_databases (
 	id INTEGER PRIMARY KEY,
 	name TEXT UNIQUE,
-	token TEXT,
 	template_id INTEGER REFERENCES atombase_schema_templates(id),
-	template_version INTEGER DEFAULT 1
+	template_version INTEGER DEFAULT 1,
+	auth_token_encrypted BLOB
 );
 
 CREATE TABLE atombase_migrations (

@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS atombase_databases (
     name TEXT UNIQUE,
     template_id INTEGER REFERENCES atombase_schema_templates(id),
     template_version INTEGER DEFAULT 1,
+    auth_token_encrypted BLOB,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );

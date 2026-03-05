@@ -47,14 +47,14 @@ type pipelineError struct {
 	Code    string `json:"code,omitempty"`
 }
 
-// BatchExecute sends multiple SQL statements to a Turso database in a single HTTP request.
+// BatchExecuteWithToken sends multiple SQL statements to a Turso database using a per-database token.
 // Turso automatically executes all statements as a single transaction - if any statement
 // fails, the entire batch is rolled back.
 //
 // This is significantly more efficient than individual ExecContext calls:
 // - 1 HTTP round-trip instead of N
 // - Turso benchmarks show ~3x improvement (5.3s for 10 individual queries vs 1.7s for 1000 batched)
-func BatchExecute(ctx context.Context, dbName string, statements []string) error {
+func BatchExecuteWithToken(ctx context.Context, dbName, token string, statements []string) error {
 	if len(statements) == 0 {
 		return nil
 	}
@@ -64,9 +64,8 @@ func BatchExecute(ctx context.Context, dbName string, statements []string) error
 		return fmt.Errorf("TURSO_ORGANIZATION is not set")
 	}
 
-	token := config.Cfg.TursoGroupAuthToken
 	if token == "" {
-		return fmt.Errorf("TURSO_GROUP_AUTH_TOKEN is not set")
+		return fmt.Errorf("auth token is required")
 	}
 
 	// Build pipeline request
