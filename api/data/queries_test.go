@@ -434,7 +434,7 @@ func TestUpsertJSON_RequiresAllPKColumns(t *testing.T) {
 	defer db.Close()
 	schema := loadSchema(t, db)
 
-	dao := &Database{
+	dao := &TenantConnection{
 		Client: db,
 		Schema: schema,
 	}
@@ -460,7 +460,7 @@ func TestUpsertJSON_AllPKColumnsPresent(t *testing.T) {
 	defer db.Close()
 	schema := loadSchema(t, db)
 
-	dao := &Database{
+	dao := &TenantConnection{
 		Client: db,
 		Schema: schema,
 	}
@@ -496,7 +496,7 @@ func TestUpdateJSON_RequiresWhereClause(t *testing.T) {
 	defer db.Close()
 	schema := loadSchema(t, db)
 
-	dao := &Database{
+	dao := &TenantConnection{
 		Client: db,
 		Schema: schema,
 	}
@@ -517,7 +517,7 @@ func TestDeleteJSON_RequiresWhereClause(t *testing.T) {
 	defer db.Close()
 	schema := loadSchema(t, db)
 
-	dao := &Database{
+	dao := &TenantConnection{
 		Client: db,
 		Schema: schema,
 	}
@@ -542,7 +542,7 @@ func TestBatch_TransactionRollback(t *testing.T) {
 	defer db.Close()
 	schema := loadSchema(t, db)
 
-	dao := &Database{
+	dao := &TenantConnection{
 		Client: db,
 		Schema: schema,
 	}

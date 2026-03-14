@@ -9,7 +9,7 @@ import (
 )
 
 // Batch executes multiple operations atomically within a tenant database transaction.
-func (dao *Database) Batch(ctx context.Context, req BatchRequest) (BatchResponse, error) {
+func (dao *TenantConnection) Batch(ctx context.Context, req BatchRequest) (BatchResponse, error) {
 	if len(req.Operations) == 0 {
 		return BatchResponse{Results: []any{}}, nil
 	}
@@ -42,7 +42,7 @@ func (dao *Database) Batch(ctx context.Context, req BatchRequest) (BatchResponse
 }
 
 // executeOperation executes a single batch operation within a transaction.
-func (dao *Database) executeOperation(ctx context.Context, tx Executor, op BatchOperation) (any, error) {
+func (dao *TenantConnection) executeOperation(ctx context.Context, tx Executor, op BatchOperation) (any, error) {
 	switch op.Operation {
 	case "select":
 		var query SelectQuery

@@ -23,7 +23,7 @@ var (
 )
 
 // listDatabases returns all databases.
-func (api *API) listDatabases(ctx context.Context) ([]Database, error) {
+func (api *API) listDatabases(ctx context.Context) ([]DatabaseRecord, error) {
 	conn, err := api.dbConn()
 	if err != nil {
 		return nil, err
@@ -39,9 +39,9 @@ func (api *API) listDatabases(ctx context.Context) ([]Database, error) {
 	}
 	defer rows.Close()
 
-	var databases []Database
+	var databases []DatabaseRecord
 	for rows.Next() {
-		var t Database
+		var t DatabaseRecord
 		var createdAt, updatedAt string
 		if err := rows.Scan(&t.ID, &t.Name, &t.TemplateID, &t.TemplateVersion, &createdAt, &updatedAt); err != nil {
 			return nil, err
@@ -57,14 +57,14 @@ func (api *API) listDatabases(ctx context.Context) ([]Database, error) {
 	}
 
 	if databases == nil {
-		databases = []Database{}
+		databases = []DatabaseRecord{}
 	}
 
 	return databases, nil
 }
 
 // getDatabase returns a database by name.
-func (api *API) getDatabase(ctx context.Context, name string) (*Database, error) {
+func (api *API) getDatabase(ctx context.Context, name string) (*DatabaseRecord, error) {
 	conn, err := api.dbConn()
 	if err != nil {
 		return nil, err
@@ -76,7 +76,7 @@ func (api *API) getDatabase(ctx context.Context, name string) (*Database, error)
 		WHERE name = ?
 	`, TableDatabases), name)
 
-	var t Database
+	var t DatabaseRecord
 	var createdAt, updatedAt string
 
 	if err := row.Scan(&t.ID, &t.Name, &t.TemplateID, &t.TemplateVersion, &createdAt, &updatedAt); err != nil {
@@ -143,7 +143,7 @@ func decodeStoredDatabaseToken(storedToken []byte) (string, error) {
 
 // createDatabase creates a new database using the specified template.
 // Creates a Turso database, generates a token, and initializes the schema.
-func (api *API) createDatabase(ctx context.Context, name, templateName string) (*Database, error) {
+func (api *API) createDatabase(ctx context.Context, name, templateName string) (*DatabaseRecord, error) {
 	// Get template to verify it exists and get current version
 	template, err := api.getTemplate(ctx, templateName)
 	if err != nil {
@@ -231,7 +231,7 @@ func (api *API) createDatabase(ctx context.Context, name, templateName string) (
 
 	createdAt, _ := time.Parse(time.RFC3339, now)
 
-	return &Database{
+	return &DatabaseRecord{
 		ID:              int32(tenantID),
 		Name:            name,
 		TemplateID:      template.ID,
@@ -388,7 +388,7 @@ func (api *API) getMigrationByVersions(ctx context.Context, templateID int32, fr
 }
 
 // getDatabasesByTemplate returns all databases using a specific template.
-func (api *API) getDatabasesByTemplate(ctx context.Context, templateID int32) ([]Database, error) {
+func (api *API) getDatabasesByTemplate(ctx context.Context, templateID int32) ([]DatabaseRecord, error) {
 	conn, err := api.dbConn()
 	if err != nil {
 		return nil, err
@@ -405,9 +405,9 @@ func (api *API) getDatabasesByTemplate(ctx context.Context, templateID int32) ([
 	}
 	defer rows.Close()
 
-	var databases []Database
+	var databases []DatabaseRecord
 	for rows.Next() {
-		var t Database
+		var t DatabaseRecord
 		var createdAt, updatedAt string
 		if err := rows.Scan(&t.ID, &t.Name, &t.TemplateID, &t.TemplateVersion, &createdAt, &updatedAt); err != nil {
 			return nil, err
@@ -422,7 +422,7 @@ func (api *API) getDatabasesByTemplate(ctx context.Context, templateID int32) ([
 	}
 
 	if databases == nil {
-		databases = []Database{}
+		databases = []DatabaseRecord{}
 	}
 
 	return databases, nil
@@ -430,7 +430,7 @@ func (api *API) getDatabasesByTemplate(ctx context.Context, templateID int32) ([
 
 // getPendingDatabases returns databases that need migration for a given job.
 // Pending = template_version < target.
-func (api *API) getPendingDatabases(ctx context.Context, _ int64, templateID int32, targetVersion int) ([]Database, error) {
+func (api *API) getPendingDatabases(ctx context.Context, _ int64, templateID int32, targetVersion int) ([]DatabaseRecord, error) {
 	conn, err := api.dbConn()
 	if err != nil {
 		return nil, err
@@ -448,9 +448,9 @@ func (api *API) getPendingDatabases(ctx context.Context, _ int64, templateID int
 	}
 	defer rows.Close()
 
-	var databases []Database
+	var databases []DatabaseRecord
 	for rows.Next() {
-		var t Database
+		var t DatabaseRecord
 		var storedToken []byte
 		var createdAt, updatedAt string
 		if err := rows.Scan(&t.ID, &t.Name, &t.TemplateID, &t.TemplateVersion, &storedToken, &createdAt, &updatedAt); err != nil {
@@ -472,14 +472,14 @@ func (api *API) getPendingDatabases(ctx context.Context, _ int64, templateID int
 	}
 
 	if databases == nil {
-		databases = []Database{}
+		databases = []DatabaseRecord{}
 	}
 
 	return databases, nil
 }
 
 // getFailedDatabases returns databases that failed migration for a given job.
-func (api *API) getFailedDatabases(ctx context.Context, migrationID int64) ([]Database, error) {
+func (api *API) getFailedDatabases(ctx context.Context, migrationID int64) ([]DatabaseRecord, error) {
 	conn, err := api.dbConn()
 	if err != nil {
 		return nil, err
@@ -504,9 +504,9 @@ func (api *API) getFailedDatabases(ctx context.Context, migrationID int64) ([]Da
 	}
 	defer rows.Close()
 
-	var databases []Database
+	var databases []DatabaseRecord
 	for rows.Next() {
-		var t Database
+		var t DatabaseRecord
 		var storedToken []byte
 		var createdAt, updatedAt string
 		if err := rows.Scan(&t.ID, &t.Name, &t.TemplateID, &t.TemplateVersion, &storedToken, &createdAt, &updatedAt); err != nil {
@@ -528,7 +528,7 @@ func (api *API) getFailedDatabases(ctx context.Context, migrationID int64) ([]Da
 	}
 
 	if databases == nil {
-		databases = []Database{}
+		databases = []DatabaseRecord{}
 	}
 
 	return databases, nil

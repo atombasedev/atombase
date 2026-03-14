@@ -15,11 +15,11 @@ import (
 // //go:embed openapi.yaml
 // var openapiSpec []byte
 
-// DbHandler is a handler that operates on a Database.
-type DbHandler func(ctx context.Context, db *Database, req *http.Request) ([]byte, error)
+// DbHandler is a handler that operates on a tenant connection.
+type DbHandler func(ctx context.Context, db *TenantConnection, req *http.Request) ([]byte, error)
 
 // DbResponseHandler is a handler that needs access to the ResponseWriter.
-type DbResponseHandler func(ctx context.Context, db *Database, req *http.Request, w http.ResponseWriter) ([]byte, error)
+type DbResponseHandler func(ctx context.Context, db *TenantConnection, req *http.Request, w http.ResponseWriter) ([]byte, error)
 
 // RegisterRoutes registers all Data API routes on the provided ServeMux.
 // All routes are prefixed with /data.
@@ -106,15 +106,15 @@ func (api *API) withDBResponse(handler DbResponseHandler) http.HandlerFunc {
 // connDb returns an external tenant database connection for the Database header value.
 // The internal primary metadata database is never queryable through Data API routes.
 // Returns the connection and a boolean indicating if it should be closed after use.
-func (api *API) connDb(req *http.Request) (Database, bool, error) {
+func (api *API) connDb(req *http.Request) (TenantConnection, bool, error) {
 	dbName := req.Header.Get("Database")
 	if dbName == "" {
-		return Database{}, false, tools.ErrMissingDatabase
+		return TenantConnection{}, false, tools.ErrMissingDatabase
 	}
 
 	db, err := api.connTurso(dbName)
 	if err != nil {
-		return Database{}, false, err
+		return TenantConnection{}, false, err
 	}
 
 	return db, true, nil
@@ -122,7 +122,7 @@ func (api *API) connDb(req *http.Request) (Database, bool, error) {
 
 // handleBatch handles POST /data/batch for atomic multi-operation requests.
 func (api *API) handleBatch() http.HandlerFunc {
-	return api.withDB(func(ctx context.Context, dao *Database, req *http.Request) ([]byte, error) {
+	return api.withDB(func(ctx context.Context, dao *TenantConnection, req *http.Request) ([]byte, error) {
 		var batchReq BatchRequest
 		if err := json.NewDecoder(req.Body).Decode(&batchReq); err != nil {
 			return nil, err
@@ -137,7 +137,7 @@ func (api *API) handleBatch() http.HandlerFunc {
 
 // handleQueryRows handles POST /data/query/{table} for SELECT, INSERT, UPDATE, and DELETE operations.
 func (api *API) handleQueryRows() http.HandlerFunc {
-	return api.withDBResponse(func(ctx context.Context, dao *Database, req *http.Request, w http.ResponseWriter) ([]byte, error) {
+	return api.withDBResponse(func(ctx context.Context, dao *TenantConnection, req *http.Request, w http.ResponseWriter) ([]byte, error) {
 		table := req.PathValue("table")
 
 		operation, onConflict, countExact := parsePreferHeaders(req)
@@ -207,7 +207,6 @@ func (api *API) handleQueryRows() http.HandlerFunc {
 		return nil, tools.ErrMissingOperation
 	})
 }
-
 
 // func handleOpenAPISpec() http.HandlerFunc {
 // 	return func(w http.ResponseWriter, r *http.Request) {

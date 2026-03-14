@@ -15,8 +15,8 @@ type API struct {
 	store *primarystore.Store
 }
 
-// Database represents an external tenant database connection with cached schema.
-type Database struct {
+// TenantConnection represents an external tenant database connection with cached schema.
+type TenantConnection struct {
 	Client          *sql.DB     // SQL database connection
 	Token           string      // authentication token
 	Schema          SchemaCache // Cached schema for validation

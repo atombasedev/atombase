@@ -282,7 +282,7 @@ func (api *API) runMigrationJobInternal(ctx context.Context, migration *Migratio
 }
 
 // loadMigrationCache pre-loads all needed migrations for the job.
-func (api *API) loadMigrationCache(ctx context.Context, templateID int32, databases []Database, targetVersion int) (map[int][]string, error) {
+func (api *API) loadMigrationCache(ctx context.Context, templateID int32, databases []DatabaseRecord, targetVersion int) (map[int][]string, error) {
 	// Find minimum database version
 	minVersion := targetVersion
 	for _, t := range databases {
@@ -305,7 +305,7 @@ func (api *API) loadMigrationCache(ctx context.Context, templateID int32, databa
 }
 
 // migrateTenant migrates a single database with retry logic.
-func migrateTenant(ctx context.Context, database Database, migrations map[int][]string, targetVersion int) MigrationResult {
+func migrateTenant(ctx context.Context, database DatabaseRecord, migrations map[int][]string, targetVersion int) MigrationResult {
 	result := MigrationResult{DatabaseID: database.ID}
 
 	// Build chained SQL for this database
@@ -368,7 +368,7 @@ func migrateTenant(ctx context.Context, database Database, migrations map[int][]
 }
 
 // migrateBatchConcurrent migrates a batch of databases concurrently.
-func migrateBatchConcurrent(ctx context.Context, databases []Database, migrations map[int][]string, targetVersion int) []MigrationResult {
+func migrateBatchConcurrent(ctx context.Context, databases []DatabaseRecord, migrations map[int][]string, targetVersion int) []MigrationResult {
 	results := make([]MigrationResult, len(databases))
 
 	// Check for cancellation before starting batch
@@ -387,7 +387,7 @@ func migrateBatchConcurrent(ctx context.Context, databases []Database, migration
 
 	for i, database := range databases {
 		wg.Add(1)
-		go func(idx int, t Database) {
+		go func(idx int, t DatabaseRecord) {
 			defer wg.Done()
 			results[idx] = migrateTenant(ctx, t, migrations, targetVersion)
 		}(i, database)

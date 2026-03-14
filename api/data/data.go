@@ -26,44 +26,44 @@ func NewAPI(primaryStore *primarystore.Store) (*API, error) {
 }
 
 // connTurso opens a connection to an external Turso database by name.
-func (api *API) connTurso(dbName string) (Database, error) {
+func (api *API) connTurso(dbName string) (TenantConnection, error) {
 	org := config.Cfg.TursoOrganization
 
 	if org == "" {
-		return Database{}, errors.New("TURSO_ORGANIZATION environment variable is not set but is required to access external databases")
+		return TenantConnection{}, errors.New("TURSO_ORGANIZATION environment variable is not set but is required to access external databases")
 	}
 
 	if api == nil || api.store == nil || api.store.DB() == nil {
-		return Database{}, errors.New("primary store not initialized")
+		return TenantConnection{}, errors.New("primary store not initialized")
 	}
 
 	meta, err := api.store.LookupDatabaseByName(dbName)
 	if err != nil {
-		return Database{}, err
+		return TenantConnection{}, err
 	}
 
 	if meta.AuthToken == "" {
-		return Database{}, errors.New("database has no auth token configured")
+		return TenantConnection{}, errors.New("database has no auth token configured")
 	}
 
 	// Get cached template (schema + current version).
 	schema, currentVersion, err := GetCachedTemplate(api.store.DB(), meta.TemplateID)
 	if err != nil {
-		return Database{}, fmt.Errorf("failed to load schema: %w", err)
+		return TenantConnection{}, fmt.Errorf("failed to load schema: %w", err)
 	}
 
 	client, err := sql.Open("libsql", fmt.Sprintf("libsql://%s-%s.turso.io?authToken=%s", dbName, org, meta.AuthToken))
 	if err != nil {
-		return Database{}, err
+		return TenantConnection{}, err
 	}
 
 	err = client.Ping()
 	if err != nil {
 		client.Close()
-		return Database{}, err
+		return TenantConnection{}, err
 	}
 
-	return Database{
+	return TenantConnection{
 		Client:          client,
 		Schema:          schema,
 		Token:           meta.AuthToken,
@@ -77,7 +77,7 @@ func (api *API) connTurso(dbName string) (Database, error) {
 }
 
 // QueryMap executes a query and returns results as a slice of maps.
-func (dao *Database) QueryMap(ctx context.Context, query string, args ...any) ([]interface{}, error) {
+func (dao *TenantConnection) QueryMap(ctx context.Context, query string, args ...any) ([]interface{}, error) {
 	rows, err := dao.Client.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -168,7 +168,7 @@ func (dao *Database) QueryMap(ctx context.Context, query string, args ...any) ([
 }
 
 // QueryJSON executes a query and returns results as JSON bytes.
-func (dao *Database) QueryJSON(ctx context.Context, query string, args ...any) ([]byte, error) {
+func (dao *TenantConnection) QueryJSON(ctx context.Context, query string, args ...any) ([]byte, error) {
 	m, err := dao.QueryMap(ctx, query, args...)
 	if err != nil {
 		return nil, err

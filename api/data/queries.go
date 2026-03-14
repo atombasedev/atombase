@@ -13,11 +13,11 @@ import (
 
 // SelectJSON queries rows using JSON body format.
 // POST /data/query/{table} with Prefer: operation=select
-func (dao *Database) SelectJSON(ctx context.Context, relation string, query SelectQuery, includeCount bool) (SelectResult, error) {
+func (dao *TenantConnection) SelectJSON(ctx context.Context, relation string, query SelectQuery, includeCount bool) (SelectResult, error) {
 	return dao.selectJSON(ctx, dao.Client, relation, query, includeCount)
 }
 
-func (dao *Database) selectJSON(ctx context.Context, exec Executor, relation string, query SelectQuery, includeCount bool) (SelectResult, error) {
+func (dao *TenantConnection) selectJSON(ctx context.Context, exec Executor, relation string, query SelectQuery, includeCount bool) (SelectResult, error) {
 	if err := tools.ValidateTableName(relation); err != nil {
 		return SelectResult{}, err
 	}
@@ -115,11 +115,11 @@ func (dao *Database) selectJSON(ctx context.Context, exec Executor, relation str
 
 // InsertJSON inserts a single row using JSON body format.
 // POST /data/query/{table} (no Prefer header)
-func (dao *Database) InsertJSON(ctx context.Context, relation string, req InsertRequest) ([]byte, error) {
+func (dao *TenantConnection) InsertJSON(ctx context.Context, relation string, req InsertRequest) ([]byte, error) {
 	return dao.insertJSON(ctx, dao.Client, relation, req)
 }
 
-func (dao *Database) insertJSON(ctx context.Context, exec Executor, relation string, req InsertRequest) ([]byte, error) {
+func (dao *TenantConnection) insertJSON(ctx context.Context, exec Executor, relation string, req InsertRequest) ([]byte, error) {
 	if err := tools.ValidateTableName(relation); err != nil {
 		return nil, err
 	}
@@ -195,11 +195,11 @@ func (dao *Database) insertJSON(ctx context.Context, exec Executor, relation str
 
 // InsertIgnoreJSON inserts row(s), ignoring conflicts.
 // POST /data/query/{table} with Prefer: operation=insert,on-conflict=ignore
-func (dao *Database) InsertIgnoreJSON(ctx context.Context, relation string, req InsertRequest) ([]byte, error) {
+func (dao *TenantConnection) InsertIgnoreJSON(ctx context.Context, relation string, req InsertRequest) ([]byte, error) {
 	return dao.insertIgnoreJSON(ctx, dao.Client, relation, req)
 }
 
-func (dao *Database) insertIgnoreJSON(ctx context.Context, exec Executor, relation string, req InsertRequest) ([]byte, error) {
+func (dao *TenantConnection) insertIgnoreJSON(ctx context.Context, exec Executor, relation string, req InsertRequest) ([]byte, error) {
 	if err := tools.ValidateTableName(relation); err != nil {
 		return nil, err
 	}
@@ -275,11 +275,11 @@ func (dao *Database) insertIgnoreJSON(ctx context.Context, exec Executor, relati
 
 // UpsertJSON inserts multiple rows, updating on conflict.
 // POST /data/query/{table} with Prefer: on-conflict=replace
-func (dao *Database) UpsertJSON(ctx context.Context, relation string, req UpsertRequest) ([]byte, error) {
+func (dao *TenantConnection) UpsertJSON(ctx context.Context, relation string, req UpsertRequest) ([]byte, error) {
 	return dao.upsertJSON(ctx, dao.Client, relation, req)
 }
 
-func (dao *Database) upsertJSON(ctx context.Context, exec Executor, relation string, req UpsertRequest) ([]byte, error) {
+func (dao *TenantConnection) upsertJSON(ctx context.Context, exec Executor, relation string, req UpsertRequest) ([]byte, error) {
 	if err := tools.ValidateTableName(relation); err != nil {
 		return nil, err
 	}
@@ -369,11 +369,11 @@ func (dao *Database) upsertJSON(ctx context.Context, exec Executor, relation str
 
 // UpdateJSON modifies rows using JSON body format.
 // PATCH /data/query/{table}
-func (dao *Database) UpdateJSON(ctx context.Context, relation string, req UpdateRequest) ([]byte, error) {
+func (dao *TenantConnection) UpdateJSON(ctx context.Context, relation string, req UpdateRequest) ([]byte, error) {
 	return dao.updateJSON(ctx, dao.Client, relation, req)
 }
 
-func (dao *Database) updateJSON(ctx context.Context, exec Executor, relation string, req UpdateRequest) ([]byte, error) {
+func (dao *TenantConnection) updateJSON(ctx context.Context, exec Executor, relation string, req UpdateRequest) ([]byte, error) {
 	if err := tools.ValidateTableName(relation); err != nil {
 		return nil, err
 	}
@@ -431,11 +431,11 @@ func (dao *Database) updateJSON(ctx context.Context, exec Executor, relation str
 
 // DeleteJSON removes rows using JSON body format.
 // DELETE /data/query/{table}
-func (dao *Database) DeleteJSON(ctx context.Context, relation string, req DeleteRequest) ([]byte, error) {
+func (dao *TenantConnection) DeleteJSON(ctx context.Context, relation string, req DeleteRequest) ([]byte, error) {
 	return dao.deleteJSON(ctx, dao.Client, relation, req)
 }
 
-func (dao *Database) deleteJSON(ctx context.Context, exec Executor, relation string, req DeleteRequest) ([]byte, error) {
+func (dao *TenantConnection) deleteJSON(ctx context.Context, exec Executor, relation string, req DeleteRequest) ([]byte, error) {
 	if err := tools.ValidateTableName(relation); err != nil {
 		return nil, err
 	}
@@ -470,7 +470,7 @@ func (dao *Database) deleteJSON(ctx context.Context, exec Executor, relation str
 }
 
 // queryJSONWithExec executes a query and returns JSON results using the provided executor.
-func (dao *Database) queryJSONWithExec(ctx context.Context, exec Executor, query string, args ...any) ([]byte, error) {
+func (dao *TenantConnection) queryJSONWithExec(ctx context.Context, exec Executor, query string, args ...any) ([]byte, error) {
 	rows, err := exec.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err

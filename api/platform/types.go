@@ -109,8 +109,8 @@ type TemplateVersion struct {
 	CreatedAt  time.Time `json:"createdAt"`
 }
 
-// Database represents a provisioned database.
-type Database struct {
+// DatabaseRecord represents a provisioned database row returned by the Platform API.
+type DatabaseRecord struct {
 	ID              int32     `json:"id"`
 	Name            string    `json:"name"`
 	Token           string    `json:"token"`
