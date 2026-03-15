@@ -150,6 +150,7 @@ export interface UserDefinition<
 > {
   name?: string;
   type: "user";
+  provision?: Condition<ProvisionFieldPath>;
   schema: Schema;
   access: Access;
 }
@@ -164,6 +165,7 @@ export interface OrganizationDefinition<
   roles?: readonly RoleName[];
   maxMembers?: number;
   management?: ManagementDefinition<RoleName>;
+  provision?: Condition<ProvisionFieldPath>;
   schema: Schema;
   access: Access;
 }
@@ -535,6 +537,7 @@ type ColumnNameOf<
   : never;
 
 type AuthFieldName = "id" | "status" | "role";
+type ProvisionAuthFieldName = "id" | "status" | "email" | "verified";
 type OperationName = "select" | "insert" | "update" | "delete";
 type EmptyScope = Record<never, never>;
 type PrevFieldPath<RowField extends string, Op extends OperationName> = Op extends "insert" ? never : `old.${RowField}`;
@@ -549,6 +552,14 @@ type PolicyContext<RowField extends string, Op extends OperationName> = {
   prev: Op extends "insert" ? EmptyScope : { [K in RowField]: FieldReference<`old.${K}`> };
   next: Op extends "select" | "delete" ? EmptyScope : { [K in RowField]: FieldReference<`new.${K}`> };
 };
+
+type ProvisionFieldPath = `auth.${ProvisionAuthFieldName}`;
+type ProvisionContext = {
+  auth: { [K in ProvisionAuthFieldName]: FieldReference<`auth.${K}`> };
+};
+type ProvisionValue =
+  | Condition<ProvisionFieldPath>
+  | ((ctx: ProvisionContext) => Condition<ProvisionFieldPath>);
 
 type PolicyValue<RowField extends string, Op extends OperationName> =
   | Condition<PolicyFieldPath<RowField, Op>>
@@ -598,6 +609,24 @@ export function eq<LeftPath extends string, RightPath extends string>(
     return { field: right.path as LeftPath | RightPath, op: "eq", value: serializeValue(left) };
   }
   throw new Error("eq requires at least one field reference");
+}
+
+export function isNull<Path extends string>(
+  value: FieldReference<Path> | unknown
+): Condition<Path> {
+  if (!isFieldReference(value)) {
+    throw new Error("isNull requires a field reference");
+  }
+  return { field: value.path as Path, op: "is", value: null };
+}
+
+export function isNotNull<Path extends string>(
+  value: FieldReference<Path> | unknown
+): Condition<Path> {
+  if (!isFieldReference(value)) {
+    throw new Error("isNotNull requires a field reference");
+  }
+  return { field: value.path as Path, op: "is_not", value: null };
 }
 
 export function inList<Path extends string>(
@@ -666,6 +695,15 @@ export function defineAccess<Schema extends TypedSchema<any>>(
   }
 
   return normalized;
+}
+
+export function defineProvision(value: ProvisionValue): Condition<ProvisionFieldPath> {
+  if (typeof value !== "function") {
+    return value;
+  }
+  return value({
+    auth: createScopeProxy<"auth", ProvisionAuthFieldName>("auth"),
+  });
 }
 
 export function defineMembership<const Roles extends readonly string[]>(

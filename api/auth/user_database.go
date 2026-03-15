@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/atombasedev/atombase/definitions"
 	"github.com/atombasedev/atombase/tools"
 )
 
@@ -66,6 +67,29 @@ func (api *API) createUserDatabase(ctx context.Context, userID string, req creat
 	}
 	if user.DatabaseID != nil && *user.DatabaseID != "" {
 		return nil, tools.ErrDatabaseExists
+	}
+	provisionMeta, err := api.store.LookupDefinitionProvision(ctx, req.Definition)
+	if err != nil {
+		return nil, err
+	}
+	if provisionMeta.Type != definitions.DefinitionTypeUser {
+		return nil, tools.InvalidRequestErr("definition must be a user definition")
+	}
+	allowed, err := definitions.EvaluateProvision(&definitions.ProvisionPolicy{
+		DefinitionID: provisionMeta.ID,
+		Version:      provisionMeta.Version,
+		Condition:    provisionMeta.Provision,
+	}, definitions.ProvisionSubject{
+		AuthStatus: definitions.AuthStatusAuthenticated,
+		UserID:     user.ID,
+		Email:      user.Email,
+		Verified:   user.EmailVerifiedAt != nil,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, definitions.ProvisionDeniedErr()
 	}
 
 	return api.store.CreateUserDatabase(ctx, CreateUserDatabaseParams{

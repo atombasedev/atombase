@@ -55,6 +55,12 @@ type AccessPolicy struct {
 	Condition    *Condition
 }
 
+type ProvisionPolicy struct {
+	DefinitionID int32
+	Version      int
+	Condition    *Condition
+}
+
 type ManagementAction string
 
 const (
@@ -158,6 +164,7 @@ type Definition struct {
 	Type           DefinitionType  `json:"type"`
 	Roles          []string        `json:"roles,omitempty"`
 	Management     ManagementMap   `json:"management,omitempty"`
+	Provision      *Condition      `json:"provision,omitempty"`
 	CurrentVersion int             `json:"currentVersion"`
 	CreatedAt      string          `json:"createdAt"`
 	UpdatedAt      string          `json:"updatedAt"`
@@ -169,6 +176,7 @@ type DefinitionVersion struct {
 	DefinitionID int32           `json:"definitionId"`
 	Version      int             `json:"version"`
 	Schema       json.RawMessage `json:"schema"`
+	Provision    *Condition      `json:"provision,omitempty"`
 	Checksum     string          `json:"checksum"`
 	CreatedAt    string          `json:"createdAt"`
 }
@@ -178,6 +186,7 @@ type CreateDefinitionRequest struct {
 	Type       DefinitionType  `json:"type"`
 	Roles      []string        `json:"roles,omitempty"`
 	Management ManagementMap   `json:"management,omitempty"`
+	Provision  *Condition      `json:"provision,omitempty"`
 	Schema     json.RawMessage `json:"schema"`
 	Access     AccessMap       `json:"access"`
 }
@@ -186,6 +195,7 @@ type PushDefinitionRequest struct {
 	Schema     json.RawMessage `json:"schema"`
 	Access     AccessMap       `json:"access"`
 	Management ManagementMap   `json:"management,omitempty"`
+	Provision  *Condition      `json:"provision,omitempty"`
 }
 
 type CreateDatabaseRequest struct {

@@ -28,6 +28,7 @@ type OrganizationResolver interface {
 	DB() *sql.DB
 	CreateOrganization(ctx context.Context, req CreateOrganizationParams) (*Organization, error)
 	CreateUserDatabase(ctx context.Context, req CreateUserDatabaseParams) (*UserDatabase, error)
+	LookupDefinitionProvision(ctx context.Context, name string) (*DefinitionProvisionMeta, error)
 	LookupOrganizationTenant(ctx context.Context, organizationID string) (string, string, error)
 	LookupOrganizationAuthz(ctx context.Context, organizationID string) (string, string, ManagementMap, error)
 	DeleteOrganization(ctx context.Context, organizationID string) error

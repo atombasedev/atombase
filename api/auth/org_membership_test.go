@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/atombasedev/atombase/config"
+	"github.com/atombasedev/atombase/definitions"
 	"github.com/atombasedev/atombase/tools"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -100,6 +101,15 @@ func (s testOrganizationStore) CreateUserDatabase(ctx context.Context, req Creat
 		DefinitionName:    req.Definition,
 		DefinitionType:    "user",
 		DefinitionVersion: 1,
+	}, nil
+}
+
+func (s testOrganizationStore) LookupDefinitionProvision(ctx context.Context, name string) (*DefinitionProvisionMeta, error) {
+	return &DefinitionProvisionMeta{
+		ID:      1,
+		Name:    name,
+		Type:    definitions.DefinitionTypeUser,
+		Version: 1,
 	}, nil
 }
 

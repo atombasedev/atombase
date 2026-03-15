@@ -46,6 +46,12 @@ CREATE TABLE atombase_management_policies (
 	target_roles_json TEXT,
 	PRIMARY KEY(definition_id, role, action)
 );
+CREATE TABLE atombase_provision_policies (
+	definition_id INTEGER NOT NULL,
+	version INTEGER NOT NULL,
+	conditions_json TEXT,
+	PRIMARY KEY(definition_id, version)
+);
 CREATE TABLE atombase_migrations (
 	id INTEGER PRIMARY KEY,
 	definition_id INTEGER NOT NULL,
@@ -109,10 +115,11 @@ func TestDefinitionCRUDAndHistory(t *testing.T) {
 	}}}}
 
 	created, err := api.createDefinition(context.Background(), CreateDefinitionRequest{
-		Name:   "posts",
-		Type:   "organization",
-		Roles:  []string{"owner", "member"},
-		Schema: schema,
+		Name:      "posts",
+		Type:      "organization",
+		Roles:     []string{"owner", "member"},
+		Provision: &Condition{Field: "auth.verified", Op: "eq", Value: true},
+		Schema:    schema,
 		Access: map[string]OperationPolicy{
 			"posts": {
 				Select: &Condition{Field: "auth.status", Op: "eq", Value: "member"},
@@ -126,6 +133,9 @@ func TestDefinitionCRUDAndHistory(t *testing.T) {
 	if created.CurrentVersion != 1 {
 		t.Fatalf("expected version 1, got %d", created.CurrentVersion)
 	}
+	if created.Provision == nil || created.Provision.Field != "auth.verified" {
+		t.Fatalf("expected provision policy to round-trip on create, got %#v", created.Provision)
+	}
 
 	history, err := api.getDefinitionHistory(context.Background(), "posts")
 	if err != nil {
@@ -133,6 +143,9 @@ func TestDefinitionCRUDAndHistory(t *testing.T) {
 	}
 	if len(history) != 1 {
 		t.Fatalf("expected 1 history row, got %d", len(history))
+	}
+	if history[0].Provision == nil || history[0].Provision.Field != "auth.verified" {
+		t.Fatalf("expected history provision policy, got %#v", history[0].Provision)
 	}
 
 	nextSchema := Schema{Tables: []Table{
@@ -143,7 +156,8 @@ func TestDefinitionCRUDAndHistory(t *testing.T) {
 		}},
 	}}
 	version, err := api.pushDefinition(context.Background(), "posts", PushDefinitionRequest{
-		Schema: nextSchema,
+		Provision: &Condition{Field: "auth.email", Op: "eq", Value: "owner@example.com"},
+		Schema:    nextSchema,
 		Access: map[string]OperationPolicy{
 			"posts": {
 				Select: &Condition{Field: "auth.status", Op: "eq", Value: "member"},
@@ -155,6 +169,9 @@ func TestDefinitionCRUDAndHistory(t *testing.T) {
 	}
 	if version.Version != 2 {
 		t.Fatalf("expected version 2, got %d", version.Version)
+	}
+	if version.Provision == nil || version.Provision.Field != "auth.email" {
+		t.Fatalf("expected pushed provision policy, got %#v", version.Provision)
 	}
 
 	var migrationCount int
@@ -200,6 +217,64 @@ func TestPushDefinition_RejectsNoChangesAndInvalidFKs(t *testing.T) {
 		Access: map[string]OperationPolicy{"posts": {Select: &Condition{Field: "auth.status", Op: "eq", Value: "anonymous"}}},
 	}); err == nil {
 		t.Fatal("expected invalid migration error for missing FK table")
+	}
+}
+
+func TestPushDefinition_AllowsProvisionOnlyVersionBump(t *testing.T) {
+	api, db := setupPlatformAPI(t)
+	defer db.Close()
+
+	schema := Schema{Tables: []Table{{Name: "profiles", Pk: []string{"id"}, Columns: map[string]Col{
+		"id": {Name: "id", Type: "INTEGER"},
+	}}}}
+
+	created, err := api.createDefinition(context.Background(), CreateDefinitionRequest{
+		Name:      "profiles",
+		Type:      "user",
+		Provision: &Condition{Field: "auth.verified", Op: "eq", Value: true},
+		Schema:    schema,
+		Access: map[string]OperationPolicy{
+			"profiles": {Select: &Condition{Field: "auth.id", Op: "eq", Value: "auth.id"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("createDefinition failed: %v", err)
+	}
+
+	version, err := api.pushDefinition(context.Background(), "profiles", PushDefinitionRequest{
+		Provision: &Condition{Field: "auth.email", Op: "eq", Value: "owner@example.com"},
+		Schema:    schema,
+		Access: map[string]OperationPolicy{
+			"profiles": {Select: &Condition{Field: "auth.id", Op: "eq", Value: "auth.id"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("pushDefinition failed: %v", err)
+	}
+	if version.Version != 2 {
+		t.Fatalf("expected version 2, got %d", version.Version)
+	}
+	if version.Provision == nil || version.Provision.Field != "auth.email" {
+		t.Fatalf("expected updated provision policy, got %#v", version.Provision)
+	}
+
+	var migrationCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM atombase_migrations WHERE definition_id = ?`, created.ID).Scan(&migrationCount); err != nil {
+		t.Fatalf("count migrations: %v", err)
+	}
+	if migrationCount != 0 {
+		t.Fatalf("expected no migration rows for provision-only change, got %d", migrationCount)
+	}
+
+	reloaded, err := api.getDefinition(context.Background(), "profiles")
+	if err != nil {
+		t.Fatalf("getDefinition failed: %v", err)
+	}
+	if reloaded.CurrentVersion != 2 {
+		t.Fatalf("expected current version 2, got %d", reloaded.CurrentVersion)
+	}
+	if reloaded.Provision == nil || reloaded.Provision.Field != "auth.email" {
+		t.Fatalf("expected reloaded provision policy, got %#v", reloaded.Provision)
 	}
 }
 
@@ -373,6 +448,50 @@ func TestCreateDefinition_PersistsManagementPolicies(t *testing.T) {
 	}
 	if count != 9 {
 		t.Fatalf("expected 9 management policy rows, got %d", count)
+	}
+}
+
+func TestCreateDefinition_RejectsProvisionOnGlobalDefinition(t *testing.T) {
+	api, db := setupPlatformAPI(t)
+	defer db.Close()
+
+	_, err := api.createDefinition(context.Background(), CreateDefinitionRequest{
+		Name: "public",
+		Type: "global",
+		Provision: &Condition{
+			Field: "auth.verified",
+			Op:    "eq",
+			Value: true,
+		},
+		Schema: Schema{Tables: []Table{{Name: "posts", Pk: []string{"id"}, Columns: map[string]Col{
+			"id": {Name: "id", Type: "INTEGER"},
+		}}}},
+		Access: map[string]OperationPolicy{"posts": {Select: &Condition{Field: "auth.status", Op: "eq", Value: "anonymous"}}},
+	})
+	if err == nil {
+		t.Fatal("expected global definition with provision policy to fail")
+	}
+}
+
+func TestCreateDefinition_RejectsUnsupportedProvisionFields(t *testing.T) {
+	api, db := setupPlatformAPI(t)
+	defer db.Close()
+
+	_, err := api.createDefinition(context.Background(), CreateDefinitionRequest{
+		Name: "notes",
+		Type: "user",
+		Provision: &Condition{
+			Field: "auth.role",
+			Op:    "eq",
+			Value: "owner",
+		},
+		Schema: Schema{Tables: []Table{{Name: "notes", Pk: []string{"id"}, Columns: map[string]Col{
+			"id": {Name: "id", Type: "INTEGER"},
+		}}}},
+		Access: map[string]OperationPolicy{"notes": {Select: &Condition{Field: "auth.id", Op: "eq", Value: "auth.id"}}},
+	})
+	if err == nil {
+		t.Fatal("expected unsupported provision field to fail")
 	}
 }
 

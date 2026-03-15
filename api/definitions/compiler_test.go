@@ -41,3 +41,61 @@ func TestValidateConditionContext_RejectsInvalidScopes(t *testing.T) {
 		t.Fatal("expected new.* in delete policy to fail validation")
 	}
 }
+
+func TestValidateProvisionCondition_RejectsInvalidFields(t *testing.T) {
+	if _, err := ParseAndValidateProvision(DefinitionTypeGlobal, &Condition{
+		Field: "auth.verified",
+		Op:    "eq",
+		Value: true,
+	}); err == nil {
+		t.Fatal("expected global provision policy to fail")
+	}
+
+	if _, err := ParseAndValidateProvision(DefinitionTypeUser, &Condition{
+		Field: "old.id",
+		Op:    "eq",
+		Value: 1,
+	}); err == nil {
+		t.Fatal("expected old.* in provision policy to fail")
+	}
+}
+
+func TestEvaluateProvision_UsesPrimaryAuthContext(t *testing.T) {
+	allowed, err := EvaluateProvision(&ProvisionPolicy{
+		Condition: &Condition{Field: "auth.verified", Op: "eq", Value: true},
+	}, ProvisionSubject{
+		AuthStatus: AuthStatusAuthenticated,
+		UserID:     "user-1",
+		Email:      "user@example.com",
+		Verified:   true,
+	})
+	if err != nil {
+		t.Fatalf("EvaluateProvision failed: %v", err)
+	}
+	if !allowed {
+		t.Fatal("expected verified user to satisfy provision policy")
+	}
+
+	allowed, err = EvaluateProvision(&ProvisionPolicy{
+		Condition: &Condition{Field: "auth.email", Op: "eq", Value: "allowed@example.com"},
+	}, ProvisionSubject{
+		AuthStatus: AuthStatusAuthenticated,
+		UserID:     "user-1",
+		Email:      "blocked@example.com",
+		Verified:   true,
+	})
+	if err != nil {
+		t.Fatalf("EvaluateProvision failed: %v", err)
+	}
+	if allowed {
+		t.Fatal("expected mismatched email to deny provisioning")
+	}
+
+	allowed, err = EvaluateProvision(nil, ProvisionSubject{IsService: true})
+	if err != nil {
+		t.Fatalf("EvaluateProvision service bypass failed: %v", err)
+	}
+	if !allowed {
+		t.Fatal("expected service subject to bypass provisioning rules")
+	}
+}

@@ -96,7 +96,7 @@ Define definitions in the `definitions/` directory:
 
 ```typescript
 // definitions/my-app.global.ts
-import { defineGlobal, defineSchema, defineAccess, defineTable, c, allow } from "@atomicbase/definitions";
+import { defineGlobal, defineSchema, defineAccess, defineTable, c, allow, isNull } from "@atomicbase/definitions";
 
 const schema = defineSchema({
   users: defineTable({
@@ -118,6 +118,14 @@ export default defineGlobal({
     },
   }),
 });
+```
+
+Null checks use explicit helpers:
+
+```typescript
+users: {
+  select: ({ prev }) => isNull(prev.deleted_at),
+}
 ```
 
 ## Workflow

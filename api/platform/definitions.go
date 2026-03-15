@@ -26,6 +26,12 @@ func schemaTableSet(schema Schema) map[string]struct{} {
 	return out
 }
 
+func conditionsEqual(left, right *definitions.Condition) bool {
+	leftJSON, _ := json.Marshal(left)
+	rightJSON, _ := json.Marshal(right)
+	return string(leftJSON) == string(rightJSON)
+}
+
 func (api *API) loadManagementPolicies(ctx context.Context, definitionID int32) (definitions.ManagementMap, error) {
 	conn, err := api.dbConn()
 	if err != nil {
@@ -88,6 +94,28 @@ func (api *API) loadManagementPolicies(ctx context.Context, definitionID int32) 
 	return management, rows.Err()
 }
 
+func (api *API) loadProvisionPolicy(ctx context.Context, definitionID int32, version int) (*definitions.Condition, error) {
+	conn, err := api.dbConn()
+	if err != nil {
+		return nil, err
+	}
+	var raw sql.NullString
+	if err := conn.QueryRowContext(ctx, `
+		SELECT conditions_json
+		FROM atombase_provision_policies
+		WHERE definition_id = ? AND version = ?
+	`, definitionID, version).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !raw.Valid || raw.String == "" {
+		return nil, nil
+	}
+	return definitions.DecodeCondition(raw.String)
+}
+
 func (api *API) listDefinitions(ctx context.Context) ([]Definition, error) {
 	conn, err := api.dbConn()
 	if err != nil {
@@ -114,6 +142,10 @@ func (api *API) listDefinitions(ctx context.Context) ([]Definition, error) {
 		item.Type = definitions.DefinitionType(defType)
 		_ = json.Unmarshal([]byte(rolesJSON), &item.Roles)
 		item.Management, err = api.loadManagementPolicies(ctx, item.ID)
+		if err != nil {
+			return nil, err
+		}
+		item.Provision, err = api.loadProvisionPolicy(ctx, item.ID, item.CurrentVersion)
 		if err != nil {
 			return nil, err
 		}
@@ -153,6 +185,10 @@ func (api *API) getDefinition(ctx context.Context, name string) (*Definition, er
 	if err != nil {
 		return nil, err
 	}
+	item.Provision, err = api.loadProvisionPolicy(ctx, item.ID, item.CurrentVersion)
+	if err != nil {
+		return nil, err
+	}
 	return &item, nil
 }
 
@@ -166,6 +202,10 @@ func (api *API) createDefinition(ctx context.Context, req CreateDefinitionReques
 		return nil, tools.InvalidRequestErr(err.Error())
 	}
 	managementRows, err := definitions.ParseAndValidateManagement(req.Type, req.Roles, req.Management)
+	if err != nil {
+		return nil, tools.InvalidRequestErr(err.Error())
+	}
+	provisionPolicy, err := definitions.ParseAndValidateProvision(req.Type, req.Provision)
 	if err != nil {
 		return nil, tools.InvalidRequestErr(err.Error())
 	}
@@ -241,6 +281,18 @@ func (api *API) createDefinition(ctx context.Context, req CreateDefinitionReques
 			return nil, err
 		}
 	}
+	if provisionPolicy != nil && provisionPolicy.Condition != nil {
+		raw, err := json.Marshal(provisionPolicy.Condition)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO atombase_provision_policies (definition_id, version, conditions_json)
+			VALUES (?, 1, ?)
+		`, defID, string(raw)); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -264,7 +316,9 @@ func (api *API) pushDefinition(ctx context.Context, name string, req PushDefinit
 	}
 
 	changes := diffSchemas(currentSchema, req.Schema)
-	if len(changes) == 0 {
+	schemaChanged := len(changes) > 0
+	provisionChanged := !conditionsEqual(current.Provision, req.Provision)
+	if !schemaChanged && !provisionChanged {
 		return nil, tools.ErrNoChanges
 	}
 
@@ -276,20 +330,27 @@ func (api *API) pushDefinition(ctx context.Context, name string, req PushDefinit
 	if err != nil {
 		return nil, tools.InvalidRequestErr(err.Error())
 	}
-	validationResult, err := ValidateMigrationPlan(ctx, req.Schema, nil)
+	provisionPolicy, err := definitions.ParseAndValidateProvision(current.Type, req.Provision)
 	if err != nil {
-		return nil, err
+		return nil, tools.InvalidRequestErr(err.Error())
 	}
-	if !validationResult.Valid {
-		return nil, tools.InvalidMigrationErr(validationResult.Errors[0].Message)
-	}
+	plan := &MigrationPlan{}
+	if schemaChanged {
+		validationResult, err := ValidateMigrationPlan(ctx, req.Schema, nil)
+		if err != nil {
+			return nil, err
+		}
+		if !validationResult.Valid {
+			return nil, tools.InvalidMigrationErr(validationResult.Errors[0].Message)
+		}
 
-	plan, err := GenerateMigrationPlan(currentSchema, req.Schema, changes, req.Merge)
-	if err != nil {
-		return nil, tools.InvalidMigrationErr(err.Error())
-	}
-	if err := ValidateMigrationExecution(ctx, currentSchema, plan.SQL); err != nil {
-		return nil, tools.InvalidMigrationErr(err.Error())
+		plan, err = GenerateMigrationPlan(currentSchema, req.Schema, changes, req.Merge)
+		if err != nil {
+			return nil, tools.InvalidMigrationErr(err.Error())
+		}
+		if err := ValidateMigrationExecution(ctx, currentSchema, plan.SQL); err != nil {
+			return nil, tools.InvalidMigrationErr(err.Error())
+		}
 	}
 	schemaJSON, err := encodeSchemaForStorage(req.Schema)
 	if err != nil {
@@ -326,15 +387,17 @@ func (api *API) pushDefinition(ctx context.Context, name string, req PushDefinit
 	`, current.ID, version, string(schemaJSON), checksum, now); err != nil {
 		return nil, err
 	}
-	sqlJSON, err := json.Marshal(plan.SQL)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO atombase_migrations (definition_id, from_version, to_version, sql, created_at)
-		VALUES (?, ?, ?, ?, ?)
-	`, current.ID, current.CurrentVersion, version, string(sqlJSON), now); err != nil {
-		return nil, err
+	if len(plan.SQL) > 0 {
+		sqlJSON, err := json.Marshal(plan.SQL)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO atombase_migrations (definition_id, from_version, to_version, sql, created_at)
+			VALUES (?, ?, ?, ?, ?)
+		`, current.ID, current.CurrentVersion, version, string(sqlJSON), now); err != nil {
+			return nil, err
+		}
 	}
 
 	if _, err := tx.ExecContext(ctx, `
@@ -381,6 +444,24 @@ func (api *API) pushDefinition(ctx context.Context, name string, req PushDefinit
 			return nil, err
 		}
 	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM atombase_provision_policies
+		WHERE definition_id = ? AND version = ?
+	`, current.ID, version); err != nil {
+		return nil, err
+	}
+	if provisionPolicy != nil && provisionPolicy.Condition != nil {
+		raw, err := json.Marshal(provisionPolicy.Condition)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO atombase_provision_policies (definition_id, version, conditions_json)
+			VALUES (?, ?, ?)
+		`, current.ID, version, string(raw)); err != nil {
+			return nil, err
+		}
+	}
 
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE atombase_definitions
@@ -390,7 +471,7 @@ func (api *API) pushDefinition(ctx context.Context, name string, req PushDefinit
 		return nil, err
 	}
 
-	if len(existingDBs) > 0 {
+	if len(existingDBs) > 0 && len(plan.SQL) > 0 {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE atombase_databases
 			SET definition_version = ?, updated_at = ?
@@ -408,6 +489,7 @@ func (api *API) pushDefinition(ctx context.Context, name string, req PushDefinit
 		DefinitionID: current.ID,
 		Version:      version,
 		Schema:       req.Schema,
+		Provision:    req.Provision,
 		Checksum:     checksum,
 		CreatedAt:    mustParseTime(now),
 	}, nil
@@ -423,10 +505,12 @@ func (api *API) getDefinitionHistory(ctx context.Context, name string) ([]Defini
 		return nil, err
 	}
 	rows, err := conn.QueryContext(ctx, `
-		SELECT id, definition_id, version, schema_json, checksum, created_at
-		FROM atombase_definitions_history
-		WHERE definition_id = ?
-		ORDER BY version DESC
+		SELECT h.id, h.definition_id, h.version, h.schema_json, COALESCE(p.conditions_json, ''), h.checksum, h.created_at
+		FROM atombase_definitions_history h
+		LEFT JOIN atombase_provision_policies p
+		  ON p.definition_id = h.definition_id AND p.version = h.version
+		WHERE h.definition_id = ?
+		ORDER BY h.version DESC
 	`, current.ID)
 	if err != nil {
 		return nil, err
@@ -436,11 +520,16 @@ func (api *API) getDefinitionHistory(ctx context.Context, name string) ([]Defini
 	for rows.Next() {
 		var item DefinitionVersion
 		var schemaJSON string
+		var provisionJSON string
 		var createdAt string
-		if err := rows.Scan(&item.ID, &item.DefinitionID, &item.Version, &schemaJSON, &item.Checksum, &createdAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.DefinitionID, &item.Version, &schemaJSON, &provisionJSON, &item.Checksum, &createdAt); err != nil {
 			return nil, err
 		}
 		if err := tools.DecodeSchema([]byte(schemaJSON), &item.Schema); err != nil {
+			return nil, err
+		}
+		item.Provision, err = definitions.DecodeCondition(provisionJSON)
+		if err != nil {
 			return nil, err
 		}
 		item.CreatedAt = mustParseTime(createdAt)

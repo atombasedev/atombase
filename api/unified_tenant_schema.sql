@@ -107,6 +107,13 @@ CREATE TABLE IF NOT EXISTS atombase_management_policies (
     PRIMARY KEY(definition_id, role, action)
 );
 
+CREATE TABLE IF NOT EXISTS atombase_provision_policies (
+    definition_id INTEGER NOT NULL REFERENCES atombase_definitions(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    conditions_json TEXT,
+    PRIMARY KEY(definition_id, version)
+);
+
 -- Migration SQL between versions
 CREATE TABLE IF NOT EXISTS atombase_migrations (
     id INTEGER PRIMARY KEY,

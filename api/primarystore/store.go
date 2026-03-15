@@ -30,6 +30,14 @@ type DefinitionMigration struct {
 	CreatedAt    string
 }
 
+type DefinitionProvisionMeta struct {
+	ID        int32
+	Name      string
+	Type      definitions.DefinitionType
+	Version   int
+	Provision *definitions.Condition
+}
+
 type Store struct {
 	conn *sql.DB
 }
@@ -335,6 +343,37 @@ func (s *Store) LoadAccessPolicy(ctx context.Context, definitionID int32, versio
 		policy.Condition = cond
 	}
 	return policy, nil
+}
+
+func (s *Store) LookupDefinitionProvision(ctx context.Context, name string) (*DefinitionProvisionMeta, error) {
+	if s == nil || s.conn == nil {
+		return nil, errors.New("primary store not initialized")
+	}
+	row := s.conn.QueryRowContext(ctx, `
+		SELECT d.id, d.name, d.definition_type, d.current_version, COALESCE(p.conditions_json, '')
+		FROM atombase_definitions d
+		LEFT JOIN atombase_provision_policies p
+		  ON p.definition_id = d.id AND p.version = d.current_version
+		WHERE d.name = ?
+	`, name)
+	var meta DefinitionProvisionMeta
+	var defType string
+	var provisionJSON string
+	if err := row.Scan(&meta.ID, &meta.Name, &defType, &meta.Version, &provisionJSON); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, tools.ErrDefinitionNotFound
+		}
+		return nil, err
+	}
+	meta.Type = definitions.DefinitionType(defType)
+	policy, err := definitions.LoadProvisionPolicyFromJSON(provisionJSON, meta.ID, meta.Version)
+	if err != nil {
+		return nil, err
+	}
+	if policy != nil {
+		meta.Provision = policy.Condition
+	}
+	return &meta, nil
 }
 
 func (s *Store) GetDefinitionSchema(ctx context.Context, definitionID int32) (json.RawMessage, int, error) {

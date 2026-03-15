@@ -2,13 +2,15 @@ package definitions
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
-	"github.com/atombasedev/atombase/auth"
 	"github.com/atombasedev/atombase/tools"
 )
 
@@ -40,18 +42,69 @@ func (s *Service) ResolvePrincipal(ctx context.Context, authCtx tools.AuthContex
 		if s == nil || s.store == nil || s.store.DB() == nil {
 			return Principal{}, errors.New("primary store not initialized")
 		}
-		session, err := auth.ValidateSession(auth.SessionToken(authCtx.Token), s.store.DB(), ctx)
+		session, err := validateSession(authCtx.Token, s.store.DB(), ctx)
 		if err != nil {
 			return Principal{}, tools.UnauthorizedErr("invalid session")
 		}
 		return Principal{
 			UserID:     session.UserID,
-			SessionID:  session.Id,
+			SessionID:  session.ID,
 			AuthStatus: AuthStatusAuthenticated,
 		}, nil
 	default:
 		return Principal{}, tools.UnauthorizedErr("unsupported auth role")
 	}
+}
+
+type sessionRecord struct {
+	ID        string
+	UserID    string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
+func validateSession(token string, db *sql.DB, ctx context.Context) (*sessionRecord, error) {
+	id, secret, err := splitSessionToken(token)
+	if err != nil {
+		return nil, err
+	}
+
+	var session sessionRecord
+	var secretHash []byte
+	var expiresAt string
+	var createdAt string
+	err = db.QueryRowContext(ctx, `
+		SELECT id, secret_hash, user_id, expires_at, created_at
+		FROM atombase_sessions
+		WHERE id = ?
+	`, id).Scan(&session.ID, &secretHash, &session.UserID, &expiresAt, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+
+	if subtle.ConstantTimeCompare(hashSecret(secret), secretHash) != 1 {
+		return nil, errors.New("invalid session")
+	}
+
+	session.ExpiresAt, _ = time.Parse(time.RFC3339, expiresAt)
+	session.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	if time.Now().UTC().After(session.ExpiresAt) {
+		return nil, errors.New("invalid session")
+	}
+	return &session, nil
+}
+
+func splitSessionToken(token string) (id, secret string, err error) {
+	parts := strings.SplitN(token, ".", 2)
+	if len(parts) != 2 {
+		return "", "", errors.New("invalid session")
+	}
+	return parts[0], parts[1], nil
+}
+
+func hashSecret(secret string) []byte {
+	sum := sha256.Sum256([]byte(secret))
+	return sum[:]
 }
 
 func (s *Service) ResolveTarget(ctx context.Context, principal Principal, header string) (DatabaseTarget, error) {
@@ -167,6 +220,20 @@ func ParseAndValidateManagement(defType DefinitionType, roles []string, raw Mana
 	return rows, nil
 }
 
+func ParseAndValidateProvision(defType DefinitionType, raw *Condition) (*ProvisionPolicy, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	if defType == DefinitionTypeGlobal {
+		return nil, fmt.Errorf("provision policies are only valid for user and organization definitions")
+	}
+	if err := ValidateProvisionCondition(*raw); err != nil {
+		return nil, err
+	}
+	cond := *raw
+	return &ProvisionPolicy{Condition: &cond}, nil
+}
+
 func ValidateConditionContext(cond Condition, op string, defType DefinitionType) error {
 	if cond.Field != "" {
 		if strings.HasPrefix(cond.Field, "old.") && op == "insert" {
@@ -192,6 +259,51 @@ func ValidateConditionContext(cond Condition, op string, defType DefinitionType)
 	}
 	if cond.Not != nil {
 		return ValidateConditionContext(*cond.Not, op, defType)
+	}
+	return nil
+}
+
+func ValidateProvisionCondition(cond Condition) error {
+	if cond.Field != "" {
+		scope, fieldName, err := splitScopedRef(cond.Field)
+		if err != nil {
+			return err
+		}
+		if scope != "auth" {
+			return fmt.Errorf("provision policies only support auth.* fields")
+		}
+		switch fieldName {
+		case "status", "id", "email", "verified":
+		default:
+			return fmt.Errorf("unsupported provision auth field %q", fieldName)
+		}
+		if ref, ok := cond.Value.(string); ok && strings.HasPrefix(ref, "auth.") {
+			refScope, refField, err := splitScopedRef(ref)
+			if err == nil {
+				if refScope != "auth" {
+					return fmt.Errorf("provision policies only support auth.* values")
+				}
+				switch refField {
+				case "status", "id", "email", "verified":
+				default:
+					return fmt.Errorf("unsupported provision auth field %q", refField)
+				}
+			}
+		}
+		return nil
+	}
+	for _, child := range cond.And {
+		if err := ValidateProvisionCondition(child); err != nil {
+			return err
+		}
+	}
+	for _, child := range cond.Or {
+		if err := ValidateProvisionCondition(child); err != nil {
+			return err
+		}
+	}
+	if cond.Not != nil {
+		return ValidateProvisionCondition(*cond.Not)
 	}
 	return nil
 }

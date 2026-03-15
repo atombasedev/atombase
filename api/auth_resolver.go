@@ -88,6 +88,20 @@ func (r authResolver) CreateUserDatabase(ctx context.Context, req auth.CreateUse
 	}, nil
 }
 
+func (r authResolver) LookupDefinitionProvision(ctx context.Context, name string) (*auth.DefinitionProvisionMeta, error) {
+	meta, err := r.store.LookupDefinitionProvision(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return &auth.DefinitionProvisionMeta{
+		ID:        meta.ID,
+		Name:      meta.Name,
+		Type:      meta.Type,
+		Version:   meta.Version,
+		Provision: meta.Provision,
+	}, nil
+}
+
 func (r authResolver) LookupOrganizationTenant(ctx context.Context, organizationID string) (string, string, error) {
 	return r.store.LookupOrganizationTenant(ctx, organizationID)
 }

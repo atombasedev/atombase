@@ -1,4 +1,4 @@
-import { defineSchema, defineAccess, defineTable, c, allow, defineOrg, defineMembership, eq, or, sql } from "@atomicbase/definitions";
+import { defineSchema, defineAccess, defineTable, c, allow, defineOrg, defineMembership, eq, or, sql, defineProvision, isNotNull } from "@atomicbase/definitions";
 
 const schema = defineSchema({
   users: defineTable({
@@ -10,6 +10,9 @@ const schema = defineSchema({
 });
 
 export default defineOrg({
+  provision: defineProvision(({ auth }) =>
+    isNotNull(auth.id)
+  ),
   membership: defineMembership({
     roles: ["owner", "admin", "member"],
     management: (role) => ({

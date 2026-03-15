@@ -20,12 +20,13 @@ type ManagementPermission = definitions.ManagementPermission
 type ManagementPolicy = definitions.ManagementPolicy
 type ManagementMap = definitions.ManagementMap
 type DefinitionVersion struct {
-	ID           int32     `json:"id"`
-	DefinitionID int32     `json:"definitionId"`
-	Version      int       `json:"version"`
-	Schema       Schema    `json:"schema"`
-	Checksum     string    `json:"checksum"`
-	CreatedAt    time.Time `json:"createdAt"`
+	ID           int32      `json:"id"`
+	DefinitionID int32      `json:"definitionId"`
+	Version      int        `json:"version"`
+	Schema       Schema     `json:"schema"`
+	Provision    *Condition `json:"provision,omitempty"`
+	Checksum     string     `json:"checksum"`
+	CreatedAt    time.Time  `json:"createdAt"`
 }
 
 type CreateDefinitionRequest struct {
@@ -33,6 +34,7 @@ type CreateDefinitionRequest struct {
 	Type       definitions.DefinitionType `json:"type"`
 	Roles      []string                   `json:"roles,omitempty"`
 	Management definitions.ManagementMap  `json:"management,omitempty"`
+	Provision  *definitions.Condition     `json:"provision,omitempty"`
 	Schema     Schema                     `json:"schema"`
 	Access     definitions.AccessMap      `json:"access"`
 }
@@ -41,6 +43,7 @@ type PushDefinitionRequest struct {
 	Schema     Schema                    `json:"schema"`
 	Access     definitions.AccessMap     `json:"access"`
 	Management definitions.ManagementMap `json:"management,omitempty"`
+	Provision  *definitions.Condition    `json:"provision,omitempty"`
 	Merge      []Merge                   `json:"merge,omitempty"`
 }
 

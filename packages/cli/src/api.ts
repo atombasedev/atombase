@@ -1,5 +1,6 @@
 import type {
   AccessDefinition,
+  Condition,
   DefinitionDefinition,
   DefinitionType,
   ManagementDefinition,
@@ -52,6 +53,7 @@ export interface DefinitionResponse {
   name: string;
   type: DefinitionType;
   roles?: string[];
+  provision?: Condition;
   currentVersion: number;
   createdAt: string;
   updatedAt: string;
@@ -63,6 +65,7 @@ export interface DefinitionVersion {
   definitionId: number;
   version: number;
   schema: SchemaDefinition;
+  provision?: Condition;
   checksum: string;
   createdAt: string;
 }
@@ -96,6 +99,7 @@ type CreateDefinitionBody = {
   type: DefinitionType;
   roles?: string[];
   management?: ManagementDefinition;
+  provision?: Condition;
   schema: SchemaDefinition;
   access: AccessDefinition;
 };
@@ -104,25 +108,30 @@ type PushDefinitionBody = {
   schema: SchemaDefinition;
   access: AccessDefinition;
   management?: ManagementDefinition;
+  provision?: Condition;
   merge?: Merge[];
 };
 
 function toCreateDefinitionBody(definition: DefinitionDefinition): CreateDefinitionBody {
+  const provision = "provision" in definition ? definition.provision : undefined;
   return {
     name: definition.name ?? "",
     type: definition.type,
     roles: definition.type === "organization" && definition.roles ? [...definition.roles] : undefined,
     management: definition.type === "organization" ? definition.management : undefined,
+    provision,
     schema: definition.schema,
     access: definition.access,
   };
 }
 
 function toPushDefinitionBody(definition: DefinitionDefinition, merges?: Merge[]): PushDefinitionBody {
+  const provision = "provision" in definition ? definition.provision : undefined;
   return {
     schema: definition.schema,
     access: definition.access,
     management: definition.type === "organization" ? definition.management : undefined,
+    provision,
     merge: merges,
   };
 }

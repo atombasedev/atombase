@@ -59,6 +59,13 @@ export async function loadSchema(filePath: string): Promise<DefinitionDefinition
         `  Expected: access: defineAccess(schema, { ... })\n`
       );
     }
+    const provision = "provision" in definition ? definition.provision : undefined;
+    if (definition.type === "global" && provision !== undefined) {
+      throw new Error(
+        `Invalid provision block in ${fileName}\n\n` +
+        `  Global definitions cannot declare provision rules.\n`
+      );
+    }
 
     if (definition.name !== undefined && definition.name.trim() === "") {
       throw new Error(
@@ -105,6 +112,7 @@ export async function loadSchema(filePath: string): Promise<DefinitionDefinition
       err.message.includes("Definition type does not match filename") ||
       err.message.includes("Invalid schema") ||
       err.message.includes("Invalid access block") ||
+      err.message.includes("Invalid provision block") ||
       err.message.includes("has an empty name") ||
       err.message.includes("has an empty roles array") ||
       err.message.includes("has no tables") ||
