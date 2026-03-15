@@ -231,6 +231,35 @@ func (s *Store) ResolveDatabaseTarget(ctx context.Context, principal definitions
 	if s == nil || s.conn == nil {
 		return definitions.DatabaseTarget{}, errors.New("primary store not initialized")
 	}
+	if header == "" {
+		if principal.UserID == "" || principal.IsService {
+			return definitions.DatabaseTarget{}, tools.ErrMissingDatabase
+		}
+		row := s.conn.QueryRowContext(ctx, `
+			SELECT d.id, d.definition_id, def.name, def.definition_type, d.definition_version, d.auth_token_encrypted
+			FROM atombase_users u
+			JOIN atombase_databases d ON d.id = u.database_id
+			JOIN atombase_definitions def ON def.id = d.definition_id
+			WHERE u.id = ? AND def.definition_type = 'user'
+		`, principal.UserID)
+
+		var target definitions.DatabaseTarget
+		var defType string
+		var encrypted []byte
+		if err := row.Scan(&target.DatabaseID, &target.DefinitionID, &target.DefinitionName, &defType, &target.DefinitionVersion, &encrypted); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return definitions.DatabaseTarget{}, tools.ErrDatabaseNotFound
+			}
+			return definitions.DatabaseTarget{}, err
+		}
+		target.DefinitionType = definitions.DefinitionType(defType)
+		token, err := decodeStoredDatabaseToken(encrypted)
+		if err != nil {
+			return definitions.DatabaseTarget{}, err
+		}
+		target.AuthToken = token
+		return target, nil
+	}
 	parts := strings.SplitN(header, ":", 2)
 	if len(parts) != 2 || parts[1] == "" {
 		return definitions.DatabaseTarget{}, tools.InvalidRequestErr("Database header must be formatted as <type>:<name>")
@@ -246,26 +275,6 @@ func (s *Store) ResolveDatabaseTarget(ctx context.Context, principal definitions
 			JOIN atombase_definitions def ON def.id = d.definition_id
 			WHERE d.id = ? AND def.definition_type = 'global'
 		`, name)
-	case definitions.DefinitionTypeUser:
-		if principal.UserID == "" && !principal.IsService {
-			return definitions.DatabaseTarget{}, tools.UnauthorizedErr("user database requires an authenticated session")
-		}
-		if principal.IsService {
-			row = s.conn.QueryRowContext(ctx, `
-				SELECT d.id, d.definition_id, def.name, def.definition_type, d.definition_version, d.auth_token_encrypted
-				FROM atombase_databases d
-				JOIN atombase_definitions def ON def.id = d.definition_id
-				WHERE d.id = ? AND def.definition_type = 'user'
-			`, name)
-		} else {
-			row = s.conn.QueryRowContext(ctx, `
-				SELECT d.id, d.definition_id, def.name, def.definition_type, d.definition_version, d.auth_token_encrypted
-				FROM atombase_users u
-				JOIN atombase_databases d ON d.id = u.database_id
-				JOIN atombase_definitions def ON def.id = d.definition_id
-				WHERE u.id = ? AND def.name = ? AND def.definition_type = 'user'
-			`, principal.UserID, name)
-		}
 	case "org":
 		row = s.conn.QueryRowContext(ctx, `
 			SELECT d.id, d.definition_id, def.name, def.definition_type, d.definition_version, d.auth_token_encrypted

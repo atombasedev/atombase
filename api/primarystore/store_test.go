@@ -92,7 +92,7 @@ func TestResolveDatabaseTarget(t *testing.T) {
 		t.Fatalf("expected global-market, got %s", global.DatabaseID)
 	}
 
-	user, err := store.ResolveDatabaseTarget(context.Background(), definitions.Principal{UserID: "user-1"}, "user:notes")
+	user, err := store.ResolveDatabaseTarget(context.Background(), definitions.Principal{UserID: "user-1"}, "")
 	if err != nil {
 		t.Fatalf("resolve user failed: %v", err)
 	}
@@ -106,6 +106,27 @@ func TestResolveDatabaseTarget(t *testing.T) {
 	}
 	if org.DatabaseID != "org-db" {
 		t.Fatalf("expected org-db, got %s", org.DatabaseID)
+	}
+}
+
+func TestResolveDatabaseTarget_MissingHeaderRules(t *testing.T) {
+	store, db := setupStore(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO atombase_definitions (id, name, definition_type, current_version) VALUES (2, 'notes', 'user', 1)`)
+	_, _ = db.Exec(`INSERT INTO atombase_databases (id, definition_id, definition_version) VALUES ('user-notes-db', 2, 1)`)
+	_, _ = db.Exec(`INSERT INTO atombase_users (id, database_id) VALUES ('user-1', 'user-notes-db'), ('user-2', NULL)`)
+
+	if _, err := store.ResolveDatabaseTarget(context.Background(), definitions.Principal{}, ""); err == nil {
+		t.Fatal("expected missing database error for anonymous request")
+	}
+
+	if _, err := store.ResolveDatabaseTarget(context.Background(), definitions.Principal{IsService: true}, ""); err == nil {
+		t.Fatal("expected missing database error for service request")
+	}
+
+	if _, err := store.ResolveDatabaseTarget(context.Background(), definitions.Principal{UserID: "user-2"}, ""); err == nil {
+		t.Fatal("expected database not found error for user without database")
 	}
 }
 

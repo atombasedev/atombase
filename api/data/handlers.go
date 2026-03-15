@@ -106,16 +106,12 @@ func (api *API) withDBResponse(handler DbResponseHandler) http.HandlerFunc {
 // The internal primary metadata database is never queryable through Data API routes.
 // Returns the connection and a boolean indicating if it should be closed after use.
 func (api *API) connDb(req *http.Request) (TenantConnection, bool, error) {
-	dbHeader := req.Header.Get("Database")
-	if dbHeader == "" {
-		return TenantConnection{}, false, tools.ErrMissingDatabase
-	}
-
 	principal, err := api.definitions.ResolvePrincipal(req.Context(), tools.GetAuthContext(req.Context()))
 	if err != nil {
 		return TenantConnection{}, false, err
 	}
 
+	dbHeader := req.Header.Get("Database")
 	target, err := api.definitions.ResolveTarget(req.Context(), principal, dbHeader)
 	if err != nil {
 		return TenantConnection{}, false, err

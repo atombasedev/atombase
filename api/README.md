@@ -116,21 +116,22 @@ For session-backed callers, organization existence is only confirmed to members 
 
 ## Database Targeting
 
-Every data request must include a `Database` header. The value is a routed target:
+Data requests support these routing modes:
 
+- no `Database` header: use the authenticated user's own database
 - `global:<database-id>`
-- `user:<definition-name>`
 - `org:<organization-id>`
 
 Examples:
 
 ```http
 Database: global:public-catalog-prod
-Database: user:notes
 Database: org:org_123
 ```
 
-The primary database resolves that header into a concrete tenant database plus definition metadata.
+When the header is omitted, the primary database resolves the current session user to their linked user database. If the user does not have one, the request fails. Anonymous and service requests still require an explicit `Database` header.
+
+The primary database resolves that routing input into a concrete tenant database plus definition metadata.
 
 ## Data API
 
