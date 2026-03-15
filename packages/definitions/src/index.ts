@@ -92,62 +92,80 @@ export interface SchemaDefinition {
 
 export type DefinitionType = "global" | "user" | "organization";
 
-export interface Condition {
-  field?: string;
+export interface Condition<FieldPath extends string = string> {
+  field?: FieldPath;
   op?: string;
   value?: unknown;
-  and?: Condition[];
-  or?: Condition[];
-  not?: Condition;
+  and?: Condition<FieldPath>[];
+  or?: Condition<FieldPath>[];
+  not?: Condition<FieldPath>;
 }
 
-export interface OperationPolicy {
-  select?: Condition;
-  insert?: Condition;
-  update?: Condition;
-  delete?: Condition;
+export interface OperationPolicy<FieldPath extends string = string> {
+  select?: Condition<FieldPath>;
+  insert?: Condition<FieldPath>;
+  update?: Condition<FieldPath>;
+  delete?: Condition<FieldPath>;
 }
 
-export type AccessDefinition = Record<string, OperationPolicy>;
+export type AccessDefinition<TableName extends string = string, FieldPath extends string = string> = Partial<Record<TableName, OperationPolicy<FieldPath>>>;
 
-export type ManagementPermission =
+type RoleReference<RoleName extends string> = {
+  __kind: "role_ref";
+  role: RoleName;
+};
+
+export type ManagementPermission<RoleName extends string = string> =
   | boolean
-  | string[]
+  | RoleName
+  | RoleName[]
+  | RoleReference<RoleName>
+  | RoleReference<RoleName>[]
   | { any: true };
 
-export interface ManagementPolicy {
-  invite?: ManagementPermission;
-  assignRole?: ManagementPermission;
-  removeMember?: ManagementPermission;
+export interface ManagementPolicy<RoleName extends string = string> {
+  invite?: ManagementPermission<RoleName>;
+  assignRole?: ManagementPermission<RoleName>;
+  removeMember?: ManagementPermission<RoleName>;
   updateOrg?: boolean;
   deleteOrg?: boolean;
   transferOwnership?: boolean;
 }
 
-export type ManagementDefinition = Record<string, ManagementPolicy>;
+export type ManagementDefinition<RoleName extends string = string> = Partial<Record<RoleName, ManagementPolicy<RoleName>>>;
 
-export interface GlobalDefinition {
+export interface GlobalDefinition<
+  Schema extends SchemaDefinition = SchemaDefinition,
+  Access extends AccessDefinition = AccessDefinition,
+> {
   name?: string;
   type: "global";
-  schema: SchemaDefinition;
-  access: AccessDefinition;
+  schema: Schema;
+  access: Access;
 }
 
-export interface UserDefinition {
+export interface UserDefinition<
+  Schema extends SchemaDefinition = SchemaDefinition,
+  Access extends AccessDefinition = AccessDefinition,
+> {
   name?: string;
   type: "user";
-  schema: SchemaDefinition;
-  access: AccessDefinition;
+  schema: Schema;
+  access: Access;
 }
 
-export interface OrganizationDefinition {
+export interface OrganizationDefinition<
+  RoleName extends string = string,
+  Schema extends SchemaDefinition = SchemaDefinition,
+  Access extends AccessDefinition = AccessDefinition,
+> {
   name?: string;
   type: "organization";
-  roles?: string[];
+  roles?: readonly RoleName[];
   maxMembers?: number;
-  management?: ManagementDefinition;
-  schema: SchemaDefinition;
-  access: AccessDefinition;
+  management?: ManagementDefinition<RoleName>;
+  schema: Schema;
+  access: Access;
 }
 
 export type DefinitionDefinition =
@@ -155,9 +173,9 @@ export type DefinitionDefinition =
   | UserDefinition
   | OrganizationDefinition;
 
-type FieldReference = {
+type FieldReference<Path extends string = string> = {
   __kind: "field_ref";
-  path: string;
+  path: Path;
 };
 
 // =============================================================================
@@ -352,12 +370,12 @@ export function sql(expression: string): SQLExpression {
 /**
  * Builder class for defining table properties.
  */
-export class TableBuilder {
-  private _columns: Record<string, ColumnBuilder>;
+export class TableBuilder<Columns extends Record<string, ColumnBuilder> = Record<string, ColumnBuilder>> {
+  private _columns: Columns;
   private _indexes: IndexDefinition[] = [];
   private _ftsColumns: string[] | undefined = undefined;
 
-  constructor(columns: Record<string, ColumnBuilder>) {
+  constructor(columns: Columns) {
     this._columns = columns;
   }
 
@@ -434,9 +452,9 @@ export class TableBuilder {
  * }).index("idx_email", ["email"]);
  * ```
  */
-export function defineTable(
-  columns: Record<string, ColumnBuilder>
-): TableBuilder {
+export function defineTable<const Columns extends Record<string, ColumnBuilder>>(
+  columns: Columns
+): TableBuilder<Columns> {
   return new TableBuilder(columns);
 }
 
@@ -450,12 +468,17 @@ export function defineTable(
  * });
  * ```
  */
-export function defineSchema(name: string, tables: Record<string, TableBuilder>): SchemaDefinition;
-export function defineSchema(tables: Record<string, TableBuilder>): SchemaDefinition;
+type SchemaTableMap = Record<string, TableBuilder<any>>;
+type TypedSchema<Tables extends SchemaTableMap = SchemaTableMap> = SchemaDefinition & {
+  readonly __tables?: Tables;
+};
+
+export function defineSchema<const Tables extends SchemaTableMap>(name: string, tables: Tables): TypedSchema<Tables>;
+export function defineSchema<const Tables extends SchemaTableMap>(tables: Tables): TypedSchema<Tables>;
 export function defineSchema(
-  nameOrTables: string | Record<string, TableBuilder>,
-  maybeTables?: Record<string, TableBuilder>
-): SchemaDefinition {
+  nameOrTables: string | SchemaTableMap,
+  maybeTables?: SchemaTableMap
+): TypedSchema {
   const name = typeof nameOrTables === "string" ? nameOrTables : undefined;
   const tables = typeof nameOrTables === "string" ? maybeTables ?? {} : nameOrTables;
   const tableDefinitions: TableDefinition[] = [];
@@ -467,14 +490,14 @@ export function defineSchema(
   return {
     name,
     tables: tableDefinitions,
-  };
+  } as TypedSchema;
 }
 
-function field(path: string): FieldReference {
+function field<Path extends string>(path: Path): FieldReference<Path> {
   return { __kind: "field_ref", path };
 }
 
-function isFieldReference(value: unknown): value is FieldReference {
+function isFieldReference<Path extends string = string>(value: unknown): value is FieldReference<Path> {
   return typeof value === "object" && value !== null && (value as FieldReference).__kind === "field_ref";
 }
 
@@ -488,7 +511,9 @@ function serializeValue(value: unknown): unknown {
   return value;
 }
 
-function createScopeProxy(scope: string): Record<string, FieldReference> {
+function createScopeProxy<Scope extends string, Fields extends string = string>(
+  scope: Scope
+): { [K in Fields]: FieldReference<`${Scope}.${K}`> } {
   return new Proxy(
     {},
     {
@@ -497,90 +522,167 @@ function createScopeProxy(scope: string): Record<string, FieldReference> {
         return field(`${scope}.${prop}`);
       },
     }
-  ) as Record<string, FieldReference>;
+  ) as { [K in Fields]: FieldReference<`${Scope}.${K}`> };
 }
 
-type PolicyContext = {
-  auth: Record<string, FieldReference>;
-  old: Record<string, FieldReference>;
-  new: Record<string, FieldReference>;
+type TableMapOf<Schema extends TypedSchema<any>> = NonNullable<Schema["__tables"]>;
+type TableNameOf<Schema extends TypedSchema<any>> = Extract<keyof TableMapOf<Schema>, string>;
+type ColumnNameOf<
+  Schema extends TypedSchema<any>,
+  TableName extends TableNameOf<Schema>,
+> = TableMapOf<Schema>[TableName] extends TableBuilder<infer Columns>
+  ? Extract<keyof Columns, string>
+  : never;
+
+type AuthFieldName = "id" | "status" | "role";
+type OperationName = "select" | "insert" | "update" | "delete";
+type EmptyScope = Record<never, never>;
+type PrevFieldPath<RowField extends string, Op extends OperationName> = Op extends "insert" ? never : `old.${RowField}`;
+type NextFieldPath<RowField extends string, Op extends OperationName> = Op extends "select" | "delete" ? never : `new.${RowField}`;
+type PolicyFieldPath<RowField extends string, Op extends OperationName> =
+  | `auth.${AuthFieldName}`
+  | PrevFieldPath<RowField, Op>
+  | NextFieldPath<RowField, Op>;
+
+type PolicyContext<RowField extends string, Op extends OperationName> = {
+  auth: { [K in AuthFieldName]: FieldReference<`auth.${K}`> };
+  prev: Op extends "insert" ? EmptyScope : { [K in RowField]: FieldReference<`old.${K}`> };
+  next: Op extends "select" | "delete" ? EmptyScope : { [K in RowField]: FieldReference<`new.${K}`> };
 };
 
-type ManagementRoleContext = Record<string, { __kind: "role_ref"; role: string }> & {
+type PolicyValue<RowField extends string, Op extends OperationName> =
+  | Condition<PolicyFieldPath<RowField, Op>>
+  | ((ctx: PolicyContext<RowField, Op>) => Condition<PolicyFieldPath<RowField, Op>>);
+
+type PolicyInput<RowField extends string> = {
+  select?: PolicyValue<RowField, "select">;
+  insert?: PolicyValue<RowField, "insert">;
+  update?: PolicyValue<RowField, "update">;
+  delete?: PolicyValue<RowField, "delete">;
+};
+
+type AccessInput<Schema extends TypedSchema<any>> = {
+  [TableName in TableNameOf<Schema>]?: PolicyInput<ColumnNameOf<Schema, TableName>>;
+};
+
+type ManagementRoleContext<RoleName extends string> = {
+  [K in RoleName as K extends "any" ? never : K]: RoleReference<K>;
+} & {
   any(): { any: true };
 };
 
-export const r = {
-  allow(): Condition {
-    return {};
-  },
-  where(builder: (ctx: PolicyContext) => Condition): Condition {
-    return builder({
-      auth: createScopeProxy("auth"),
-      old: createScopeProxy("old"),
-      new: createScopeProxy("new"),
-    });
-  },
-};
+type ManagementResolver<RoleName extends string> =
+  | ManagementDefinition<RoleName>
+  | ((role: ManagementRoleContext<RoleName>) => ManagementDefinition<RoleName>);
 
-export function eq(left: unknown, right: unknown): Condition {
+export interface MembershipDefinition<
+  RoleName extends string = string,
+  Roles extends readonly RoleName[] = readonly RoleName[],
+> {
+  roles: Roles;
+  management?: ManagementResolver<RoleName>;
+}
+
+export function allow<FieldPath extends string = string>(): Condition<FieldPath> {
+  return {};
+}
+
+export function eq<LeftPath extends string, RightPath extends string>(
+  left: FieldReference<LeftPath> | unknown,
+  right: FieldReference<RightPath> | unknown
+): Condition<LeftPath | RightPath> {
   if (isFieldReference(left)) {
-    return { field: left.path, op: "eq", value: serializeValue(right) };
+    return { field: left.path as LeftPath | RightPath, op: "eq", value: serializeValue(right) };
   }
   if (isFieldReference(right)) {
-    return { field: right.path, op: "eq", value: serializeValue(left) };
+    return { field: right.path as LeftPath | RightPath, op: "eq", value: serializeValue(left) };
   }
   throw new Error("eq requires at least one field reference");
 }
 
-export function inList(left: unknown, values: unknown[]): Condition {
+export function inList<Path extends string>(
+  left: FieldReference<Path> | unknown,
+  values: unknown[]
+): Condition<Path> {
   if (!isFieldReference(left)) {
     throw new Error("inList requires a field reference as the first argument");
   }
-  return { field: left.path, op: "in", value: values.map((value) => serializeValue(value)) };
+  return { field: left.path as Path, op: "in", value: values.map((value) => serializeValue(value)) };
 }
 
-export function and(...conditions: Condition[]): Condition {
+export function and<FieldPath extends string>(...conditions: Condition<FieldPath>[]): Condition<FieldPath> {
   return { and: conditions };
 }
 
-export function or(...conditions: Condition[]): Condition {
+export function or<FieldPath extends string>(...conditions: Condition<FieldPath>[]): Condition<FieldPath> {
   return { or: conditions };
 }
 
-export function not(condition: Condition): Condition {
+export function not<FieldPath extends string>(condition: Condition<FieldPath>): Condition<FieldPath> {
   return { not: condition };
 }
 
-export function definePolicy(policy: OperationPolicy): OperationPolicy {
-  return policy;
+function resolvePolicyValue<RowField extends string, Op extends OperationName>(
+  operation: Op,
+  value: PolicyValue<RowField, Op> | undefined
+): Condition<PolicyFieldPath<RowField, Op>> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "function") {
+    return value;
+  }
+  const prev = operation === "insert" ? {} : createScopeProxy<"old", RowField>("old");
+  const next = operation === "select" || operation === "delete" ? {} : createScopeProxy<"new", RowField>("new");
+  return value({
+    auth: createScopeProxy<"auth", AuthFieldName>("auth"),
+    prev,
+    next,
+  } as PolicyContext<RowField, Op>);
 }
 
-export function defineAccess(access: AccessDefinition): AccessDefinition {
-  return access;
+export function defineAccess<Schema extends TypedSchema<any>>(
+  schema: Schema,
+  access: AccessInput<Schema>
+): AccessDefinition<
+  TableNameOf<Schema>,
+  PolicyFieldPath<ColumnNameOf<Schema, TableNameOf<Schema>>, OperationName>
+> {
+  void schema;
+  const normalized: AccessDefinition<
+    TableNameOf<Schema>,
+    PolicyFieldPath<ColumnNameOf<Schema, TableNameOf<Schema>>, OperationName>
+  > = {};
+
+  for (const tableName in access) {
+    const policy = access[tableName as TableNameOf<Schema>];
+    if (!policy) continue;
+    normalized[tableName as TableNameOf<Schema>] = {
+      select: resolvePolicyValue("select", policy.select),
+      insert: resolvePolicyValue("insert", policy.insert),
+      update: resolvePolicyValue("update", policy.update),
+      delete: resolvePolicyValue("delete", policy.delete),
+    };
+  }
+
+  return normalized;
 }
 
-export function defineManagement(builder: (role: ManagementRoleContext) => ManagementDefinition): ManagementDefinition {
-  const proxy = new Proxy(
-    {},
-    {
-      get(_target, prop) {
-        if (prop === "any") {
-          return () => ({ any: true as const });
-        }
-        if (typeof prop !== "string") return undefined;
-        return { __kind: "role_ref", role: prop };
-      },
-    }
-  ) as ManagementRoleContext;
-
-  return normalizeManagement(builder(proxy));
+export function defineMembership<const Roles extends readonly string[]>(
+  input: {
+    roles: Roles;
+    management?: ManagementResolver<Roles[number]>;
+  }
+): MembershipDefinition<Roles[number], Roles> {
+  return input;
 }
 
-function normalizeManagement(input: ManagementDefinition): ManagementDefinition {
-  const out: ManagementDefinition = {};
-  for (const [roleName, policy] of Object.entries(input)) {
-    out[roleName] = {
+function normalizeManagement<RoleName extends string>(input: ManagementDefinition<RoleName>): ManagementDefinition<RoleName> {
+  const out: ManagementDefinition<RoleName> = {};
+  for (const roleName in input) {
+    const policy = input[roleName as RoleName];
+    if (!policy) continue;
+    out[roleName as RoleName] = {
       invite: normalizeManagementPermission(policy.invite),
       assignRole: normalizeManagementPermission(policy.assignRole),
       removeMember: normalizeManagementPermission(policy.removeMember),
@@ -592,12 +694,18 @@ function normalizeManagement(input: ManagementDefinition): ManagementDefinition 
   return out;
 }
 
-function normalizeManagementPermission(permission: ManagementPermission | undefined): ManagementPermission | undefined {
+function normalizeManagementPermission<RoleName extends string>(permission: ManagementPermission<RoleName> | undefined): ManagementPermission<RoleName> | undefined {
   if (permission === undefined || typeof permission === "boolean") {
     return permission;
   }
+  if (typeof permission === "string") {
+    return permission;
+  }
   if (Array.isArray(permission)) {
-    return permission.map((item) => normalizeRoleValue(item));
+    return permission.map((item) => normalizeRoleValue(item)) as RoleName[];
+  }
+  if (typeof permission === "object" && permission !== null && "__kind" in permission && (permission as { __kind?: string }).__kind === "role_ref") {
+    return normalizeRoleValue(permission) as RoleName;
   }
   if (typeof permission === "object" && permission !== null && "any" in permission) {
     return { any: true };
@@ -629,9 +737,39 @@ export function defineUser(input: Omit<UserDefinition, "type">): UserDefinition 
   };
 }
 
-export function defineOrg(input: Omit<OrganizationDefinition, "type">): OrganizationDefinition {
+function createManagementRoleProxy<RoleName extends string>(): ManagementRoleContext<RoleName> {
+  return new Proxy(
+    {},
+    {
+      get(_target, prop) {
+        if (prop === "any") {
+          return () => ({ any: true as const });
+        }
+        if (typeof prop !== "string") return undefined;
+        return { __kind: "role_ref", role: prop };
+      },
+    }
+  ) as ManagementRoleContext<RoleName>;
+}
+
+export function defineOrg<const Roles extends readonly string[] = readonly string[]>(
+  input: Omit<OrganizationDefinition<Roles[number]>, "type" | "management" | "roles"> & {
+    membership?: MembershipDefinition<Roles[number], Roles>;
+  }
+): OrganizationDefinition<Roles[number]> {
+  const { membership, ...rest } = input;
+  const rawRoles = membership?.roles;
+  const rawManagement = membership?.management;
+  let management: ManagementDefinition<Roles[number]> | undefined;
+  if (typeof rawManagement === "function") {
+    management = normalizeManagement(rawManagement(createManagementRoleProxy()));
+  } else {
+    management = rawManagement as ManagementDefinition<Roles[number]> | undefined;
+  }
   return {
-    ...input,
+    ...rest,
+    roles: rawRoles,
+    management,
     type: "organization",
   };
 }

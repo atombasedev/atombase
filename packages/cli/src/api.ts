@@ -111,7 +111,7 @@ function toCreateDefinitionBody(definition: DefinitionDefinition): CreateDefinit
   return {
     name: definition.name ?? "",
     type: definition.type,
-    roles: definition.type === "organization" ? definition.roles : undefined,
+    roles: definition.type === "organization" && definition.roles ? [...definition.roles] : undefined,
     management: definition.type === "organization" ? definition.management : undefined,
     schema: definition.schema,
     access: definition.access,

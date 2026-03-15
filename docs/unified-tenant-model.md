@@ -85,26 +85,28 @@ Roles have no built-in hierarchy — permissions are explicitly defined in `mana
 
 ### Management Permissions (Organization)
 
-The `management` block defines who can manage organization membership and perform org-level operations. Use `defineManagement((role) => ({...}))` to get type-safe role references:
+The `management` block defines who can manage organization membership and perform org-level operations. Use `defineMembership({ roles, management })` to get type-safe role references:
 
 ```typescript
 export default defineOrg({
-  roles: ["owner", "admin", "member", "viewer"],
-  management: defineManagement((role) => ({
-    owner: {
-      invite: role.any(),
-      assignRole: role.any(),
-      removeMember: role.any(),
-      updateOrg: true,
-      deleteOrg: true,
-      transferOwnership: true,
-    },
-    admin: {
-      invite: [role.member, role.viewer],
-      assignRole: [role.member, role.viewer],
-      removeMember: [role.member, role.viewer],
-    },
-  })),
+  membership: defineMembership({
+    roles: ["owner", "admin", "member", "viewer"],
+    management: (role) => ({
+      owner: {
+        invite: role.any(),
+        assignRole: role.any(),
+        removeMember: role.any(),
+        updateOrg: true,
+        deleteOrg: true,
+        transferOwnership: true,
+      },
+      admin: {
+        invite: [role.member, role.viewer],
+        assignRole: [role.member, role.viewer],
+        removeMember: [role.member, role.viewer],
+      },
+    }),
+  }),
   // ...
 });
 ```
@@ -125,16 +127,19 @@ export default defineOrg({
 
 **Default management permissions (if not specified):**
 ```typescript
-management: defineManagement((role) => ({
-  owner: {
-    invite: role.any(),
-    assignRole: role.any(),
-    removeMember: role.any(),
-    updateOrg: true,
-    deleteOrg: true,
-    transferOwnership: true,
-  },
-}))
+membership: defineMembership({
+  roles: ["owner"],
+  management: (role) => ({
+    owner: {
+      invite: role.any(),
+      assignRole: role.any(),
+      removeMember: role.any(),
+      updateOrg: true,
+      deleteOrg: true,
+      transferOwnership: true,
+    },
+  }),
+})
 ```
 
 ### Access Policy Context
@@ -372,26 +377,28 @@ definitions/
 
 **Organization database** (`definitions/+customer.org.ts`):
 ```typescript
-import { defineOrg, defineManagement, defineSchema, defineAccess, defineTable, definePolicy, c, r, eq, inList } from "@atomicbase/definitions";
+import { defineOrg, defineMembership, defineSchema, defineAccess, defineTable, definePolicy, c, r, eq, inList } from "@atomicbase/definitions";
 
 export default defineOrg({
   maxMembers: 50,
-  roles: ["owner", "admin", "member", "viewer"],
-  management: defineManagement((role) => ({
-    owner: {
-      invite: role.any(),
-      assignRole: role.any(),
-      removeMember: role.any(),
-      updateOrg: true,
-      deleteOrg: true,
-      transferOwnership: true,
-    },
-    admin: {
-      invite: [role.member, role.viewer],
-      assignRole: [role.member, role.viewer],
-      removeMember: [role.member, role.viewer],
-    },
-  })),
+  membership: defineMembership({
+    roles: ["owner", "admin", "member", "viewer"],
+    management: (role) => ({
+      owner: {
+        invite: role.any(),
+        assignRole: role.any(),
+        removeMember: role.any(),
+        updateOrg: true,
+        deleteOrg: true,
+        transferOwnership: true,
+      },
+      admin: {
+        invite: [role.member, role.viewer],
+        assignRole: [role.member, role.viewer],
+        removeMember: [role.member, role.viewer],
+      },
+    }),
+  }),
   schema: defineSchema({
     projects: defineTable({
       id: c.integer().primaryKey(),

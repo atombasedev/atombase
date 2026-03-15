@@ -25,7 +25,7 @@ export async function loadSchema(filePath: string): Promise<DefinitionDefinition
         `  Your file must export a default definition:\n\n` +
         `    export default defineGlobal({\n` +
         `      schema: defineSchema({ /* tables */ }),\n` +
-        `      access: defineAccess({ /* policies */ }),\n` +
+        `      access: defineAccess(schema, { /* policies */ }),\n` +
         `    });\n`
       );
     }
@@ -56,7 +56,7 @@ export async function loadSchema(filePath: string): Promise<DefinitionDefinition
     if (typeof definition.access !== "object" || definition.access === null) {
       throw new Error(
         `Invalid access block in ${fileName}\n\n` +
-        `  Expected: access: defineAccess({ ... })\n`
+        `  Expected: access: defineAccess(schema, { ... })\n`
       );
     }
 

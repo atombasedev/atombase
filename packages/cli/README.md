@@ -29,7 +29,7 @@ import { defineConfig } from "@atomicbase/cli";
 export default defineConfig({
   url: "http://localhost:8080",
   apiKey: "your-api-key",
-  schemas: "./schemas",
+  schemas: "./definitions",
 });
 ```
 
@@ -41,7 +41,7 @@ export default defineConfig({
 npx atomicbase init
 ```
 
-Creates `atomicbase.config.ts` and `schemas/` directory.
+Creates `atomicbase.config.ts` and `definitions/` directory.
 
 ### Definitions
 
@@ -88,39 +88,41 @@ npx atomicbase databases delete <id> [-f]
 
 ## Definition Files
 
-Define definitions in the `schemas/` directory:
+Define definitions in the `definitions/` directory:
 
 - global definitions must be in `*.global.ts`
 - user definitions must be in `*.user.ts`
 - organization definitions must be in `*.org.ts`
 
 ```typescript
-// schemas/my-app.global.ts
-import { defineGlobal, defineSchema, defineAccess, definePolicy, defineTable, c, r } from "@atomicbase/definitions";
+// definitions/my-app.global.ts
+import { defineGlobal, defineSchema, defineAccess, defineTable, c, allow } from "@atomicbase/definitions";
+
+const schema = defineSchema({
+  users: defineTable({
+    id: c.integer().primaryKey(),
+    name: c.text().notNull(),
+    email: c.text().notNull().unique(),
+    created_at: c.text().notNull().default("CURRENT_TIMESTAMP"),
+  }),
+});
 
 export default defineGlobal({
-  schema: defineSchema({
-    users: defineTable({
-      id: c.integer().primaryKey(),
-      name: c.text().notNull(),
-      email: c.text().notNull().unique(),
-      created_at: c.text().notNull().default("CURRENT_TIMESTAMP"),
-    }),
-  }),
-  access: defineAccess({
-    users: definePolicy({
-      select: r.allow(),
-      insert: r.allow(),
-      update: r.allow(),
-      delete: r.allow(),
-    }),
+  schema,
+  access: defineAccess(schema, {
+    users: {
+      select: allow(),
+      insert: allow(),
+      update: allow(),
+      delete: allow(),
+    },
   }),
 });
 ```
 
 ## Workflow
 
-1. Define a definition locally in `schemas/`
+1. Define a definition locally in `definitions/`
 2. Preview changes: `npx atomicbase definitions diff`
 3. Push to server: `npx atomicbase definitions push`
 4. Create databases: `npx atomicbase databases create acme --definition my-app`

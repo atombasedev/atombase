@@ -52,28 +52,9 @@ Management is only available for organizations as it defines what parts of the o
 - `updateOrg`, `deleteOrg`, `transferOwnership` — binary permissions (`true` to allow)
 
 ```typescript
-management: defineManagement((role) => ({
-  owner: {
-    invite: role.any(),
-    assignRole: role.any(),
-    removeMember: role.any(),
-    updateOrg: true,
-    deleteOrg: true,
-    transferOwnership: true,
-  },
-}))
-```
-
-## Examples
-
-**Organization database** (`definitions/+customer.org.ts`):
-```typescript
-import { defineOrg, defineManagement, defineSchema, defineAccess, defineTable, definePolicy, c, r, eq, inList } from "@atomicbase/definitions";
-
-export default defineOrg({
-  maxMembers: 50,
-  roles: ["owner", "admin", "member", "viewer"],
-  management: defineManagement((role) => ({
+membership: defineMembership({
+  roles: ["owner"],
+  management: (role) => ({
     owner: {
       invite: role.any(),
       assignRole: role.any(),
@@ -82,12 +63,36 @@ export default defineOrg({
       deleteOrg: true,
       transferOwnership: true,
     },
-    admin: {
-      invite: [role.member, role.viewer],
-      assignRole: [role.member, role.viewer],
-      removeMember: [role.member, role.viewer],
-    },
-  })),
+  }),
+})
+```
+
+## Examples
+
+**Organization database** (`definitions/+customer.org.ts`):
+```typescript
+import { defineOrg, defineMembership, defineSchema, defineAccess, defineTable, definePolicy, c, r, eq, inList } from "@atomicbase/definitions";
+
+export default defineOrg({
+  maxMembers: 50,
+  membership: defineMembership({
+    roles: ["owner", "admin", "member", "viewer"],
+    management: (role) => ({
+      owner: {
+        invite: role.any(),
+        assignRole: role.any(),
+        removeMember: role.any(),
+        updateOrg: true,
+        deleteOrg: true,
+        transferOwnership: true,
+      },
+      admin: {
+        invite: [role.member, role.viewer],
+        assignRole: [role.member, role.viewer],
+        removeMember: [role.member, role.viewer],
+      },
+    }),
+  }),
   schema: defineSchema({
     projects: defineTable({
       id: c.integer().primaryKey(),

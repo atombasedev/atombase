@@ -12,7 +12,7 @@ export interface AtomicbaseConfig {
 const DEFAULT_CONFIG: Required<AtomicbaseConfig> = {
   url: "http://localhost:8080",
   apiKey: "",
-  schemas: "./schemas",
+  schemas: "./definitions",
   insecure: false,
 };
 

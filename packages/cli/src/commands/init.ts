@@ -7,28 +7,30 @@ const CONFIG_TEMPLATE = `import { defineConfig } from "@atomicbase/cli";
 export default defineConfig({
   url: process.env.ATOMICBASE_URL || "http://localhost:8080",
   apiKey: process.env.ATOMICBASE_API_KEY,
-  schemas: "./schemas",
+  schemas: "./definitions",
 });
 `;
 
-const EXAMPLE_SCHEMA = `import { defineGlobal, defineSchema, defineAccess, definePolicy, defineTable, c, r } from "@atomicbase/definitions";
+const EXAMPLE_SCHEMA = `import { defineGlobal, defineSchema, defineAccess, defineTable, c, allow } from "@atomicbase/definitions";
+
+const schema = defineSchema({
+  users: defineTable({
+    id: c.integer().primaryKey(),
+    email: c.text().notNull().unique(),
+    name: c.text().notNull(),
+    created_at: c.text().notNull().default("CURRENT_TIMESTAMP"),
+  }),
+});
 
 export default defineGlobal({
-  schema: defineSchema({
-    users: defineTable({
-      id: c.integer().primaryKey(),
-      email: c.text().notNull().unique(),
-      name: c.text().notNull(),
-      created_at: c.text().notNull().default("CURRENT_TIMESTAMP"),
-    }),
-  }),
-  access: defineAccess({
-    users: definePolicy({
-      select: r.allow(),
-      insert: r.allow(),
-      update: r.allow(),
-      delete: r.allow(),
-    }),
+  schema,
+  access: defineAccess(schema, {
+    users: {
+      select: allow(),
+      insert: allow(),
+      update: allow(),
+      delete: allow(),
+    },
   }),
 });
 `;
@@ -48,19 +50,19 @@ export const initCommand = new Command("init")
     writeFileSync(resolve(cwd, "atomicbase.config.ts"), CONFIG_TEMPLATE);
     console.log("Created atomicbase.config.ts");
 
-    // Create schemas directory
-    const schemasDir = resolve(cwd, "schemas");
-    if (!existsSync(schemasDir)) {
-      mkdirSync(schemasDir, { recursive: true });
-      console.log("Created schemas/");
+    // Create definitions directory
+    const definitionsDir = resolve(cwd, "definitions");
+    if (!existsSync(definitionsDir)) {
+      mkdirSync(definitionsDir, { recursive: true });
+      console.log("Created definitions/");
 
       // Create example schema
-      writeFileSync(resolve(schemasDir, "my-app.global.ts"), EXAMPLE_SCHEMA);
-      console.log("Created schemas/my-app.global.ts");
+      writeFileSync(resolve(definitionsDir, "my-app.global.ts"), EXAMPLE_SCHEMA);
+      console.log("Created definitions/my-app.global.ts");
     }
 
     console.log("\nDone! Next steps:");
     console.log("  1. Set ATOMICBASE_URL and ATOMICBASE_API_KEY environment variables");
-    console.log("  2. Edit schemas/my-app.global.ts to define your schema and access rules");
+    console.log("  2. Edit definitions/my-app.global.ts to define your schema and access rules");
     console.log("  3. Run: atomicbase definitions push");
   });
