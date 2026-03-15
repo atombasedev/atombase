@@ -75,6 +75,10 @@ func setupTestStore(t *testing.T) (*Store, *sql.DB) {
 	return store, db
 }
 
+func initTestCache() {
+	tools.InitCache(tools.NewMemoryCache())
+}
+
 func insertDatabaseRow(t *testing.T, db *sql.DB, name string, templateID any, version any) int32 {
 	t.Helper()
 
@@ -127,6 +131,27 @@ func TestNew_NilConnection(t *testing.T) {
 	}
 }
 
+func TestStoreDBAndCloseNilSafety(t *testing.T) {
+	var nilStore *Store
+	if nilStore.DB() != nil {
+		t.Fatal("expected nil DB for nil store")
+	}
+	if err := nilStore.Close(); err != nil {
+		t.Fatalf("expected nil close on nil store, got %v", err)
+	}
+
+	store, _ := setupTestStore(t)
+	if store.DB() == nil {
+		t.Fatal("expected non-nil DB from initialized store")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("unexpected close error: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("expected idempotent close, got %v", err)
+	}
+}
+
 func TestLookupDatabaseByName(t *testing.T) {
 	store, db := setupTestStore(t)
 
@@ -153,6 +178,84 @@ func TestLookupDatabaseByName(t *testing.T) {
 	if !errors.Is(err, tools.ErrDatabaseNotFound) {
 		t.Fatalf("expected ErrDatabaseNotFound, got %v", err)
 	}
+}
+
+func TestLookupDatabaseByName_UsesCache(t *testing.T) {
+	initTestCache()
+	tools.InvalidateDatabase("cached-tenant")
+
+	store, db := setupTestStore(t)
+	id := insertDatabaseRow(t, db, "cached-tenant", 11, 3)
+
+	first, err := store.LookupDatabaseByName("cached-tenant")
+	if err != nil {
+		t.Fatalf("first lookup failed: %v", err)
+	}
+	if first.ID != id {
+		t.Fatalf("expected id %d, got %d", id, first.ID)
+	}
+
+	if _, err := db.Exec(`DELETE FROM atombase_databases WHERE name = ?`, "cached-tenant"); err != nil {
+		t.Fatalf("delete backing row: %v", err)
+	}
+
+	second, err := store.LookupDatabaseByName("cached-tenant")
+	if err != nil {
+		t.Fatalf("second lookup should hit cache, got %v", err)
+	}
+	if second.ID != first.ID || second.TemplateID != first.TemplateID || second.DatabaseVersion != first.DatabaseVersion {
+		t.Fatalf("expected cached metadata %+v, got %+v", first, second)
+	}
+
+	tools.InvalidateDatabase("cached-tenant")
+}
+
+func TestLookupDatabaseByName_DecryptsTokenAndHandlesDecryptFailure(t *testing.T) {
+	initTestCache()
+	tools.InvalidateDatabase("tenant-token")
+	tools.InvalidateDatabase("tenant-bad-token")
+
+	if err := tools.InitEncryption(strings.Repeat("01", 32)); err != nil {
+		t.Fatalf("init encryption: %v", err)
+	}
+
+	store, db := setupTestStore(t)
+
+	encrypted, err := tools.Encrypt([]byte("token-secret"))
+	if err != nil {
+		t.Fatalf("encrypt token: %v", err)
+	}
+	res, err := db.Exec(
+		`INSERT INTO atombase_databases (name, template_id, template_version, auth_token_encrypted, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"tenant-token", 7, 2, encrypted, "2026-01-01T00:00:00Z",
+	)
+	if err != nil {
+		t.Fatalf("insert encrypted row: %v", err)
+	}
+	id, _ := res.LastInsertId()
+
+	meta, err := store.LookupDatabaseByName("tenant-token")
+	if err != nil {
+		t.Fatalf("lookup encrypted token: %v", err)
+	}
+	if meta.ID != int32(id) || meta.AuthToken != "token-secret" {
+		t.Fatalf("unexpected decrypted meta: %+v", meta)
+	}
+
+	if _, err := db.Exec(
+		`INSERT INTO atombase_databases (name, template_id, template_version, auth_token_encrypted, updated_at) VALUES (?, ?, ?, ?, ?)`,
+		"tenant-bad-token", 7, 2, []byte("bad"), "2026-01-01T00:00:00Z",
+	); err != nil {
+		t.Fatalf("insert invalid encrypted row: %v", err)
+	}
+
+	_, err = store.LookupDatabaseByName("tenant-bad-token")
+	if err == nil || !strings.Contains(err.Error(), "failed to decrypt auth token") {
+		t.Fatalf("expected decrypt failure, got %v", err)
+	}
+
+	tools.InvalidateDatabase("tenant-token")
+	tools.InvalidateDatabase("tenant-bad-token")
 }
 
 func TestGetMigrationsBetween(t *testing.T) {
@@ -247,6 +350,24 @@ func TestGetMigrationsBetween(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStoreMethods_NotInitialized(t *testing.T) {
+	var nilStore *Store
+
+	if _, err := nilStore.LookupDatabaseByName("tenant"); err == nil || !strings.Contains(err.Error(), "primary store not initialized") {
+		t.Fatalf("expected uninitialized lookup error, got %v", err)
+	}
+
+	if _, err := nilStore.GetMigrationsBetween(context.Background(), 1, 1, 2); err == nil || !strings.Contains(err.Error(), "primary store not initialized") {
+		t.Fatalf("expected uninitialized migrations error, got %v", err)
+	}
+
+	if err := nilStore.UpdateDatabaseVersion(context.Background(), 1, 2); err == nil || !strings.Contains(err.Error(), "primary store not initialized") {
+		t.Fatalf("expected uninitialized update error, got %v", err)
+	}
+
+	nilStore.RecordMigrationFailure(context.Background(), 1, 1, 2, errors.New("boom"))
 }
 
 func TestUpdateDatabaseVersion(t *testing.T) {
