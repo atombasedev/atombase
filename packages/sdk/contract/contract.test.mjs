@@ -41,9 +41,10 @@ async function assertHealthy() {
   assert.equal(response.status, 200, "API must be reachable before running contract tests");
 }
 
-function buildSchema(templateName) {
+function buildDefinition(definitionName) {
   return {
-    name: templateName,
+    name: definitionName,
+    type: "global",
     schema: {
       tables: [
         {
@@ -58,6 +59,14 @@ function buildSchema(templateName) {
         },
       ],
     },
+    access: {
+      contacts: {
+        select: { field: "auth.status", op: "eq", value: "anonymous" },
+        insert: { field: "auth.status", op: "eq", value: "anonymous" },
+        update: { field: "auth.status", op: "eq", value: "anonymous" },
+        delete: { field: "auth.status", op: "eq", value: "anonymous" },
+      },
+    },
   };
 }
 
@@ -65,7 +74,7 @@ test("SDK <-> API contract: core tenant data flows", { skip: skipReason ?? false
   await assertHealthy();
 
   const suffix = Date.now();
-  const templateName = `sdk-contract-${suffix}`;
+  const definitionName = `sdk-contract-${suffix}`;
   const tenantName = `sdk-contract-tenant-${suffix}`;
 
   const client = createClient({
@@ -73,24 +82,24 @@ test("SDK <-> API contract: core tenant data flows", { skip: skipReason ?? false
     ...(API_KEY ? { apiKey: API_KEY } : {}),
   });
 
-  let templateCreated = false;
+  let definitionCreated = false;
   let tenantCreated = false;
 
   try {
-    await apiRequest("/platform/templates", {
+    await apiRequest("/platform/definitions", {
       method: "POST",
-      body: buildSchema(templateName),
+      body: buildDefinition(definitionName),
     });
-    templateCreated = true;
+    definitionCreated = true;
 
     const tenantCreate = await client.databases.create({
-      name: tenantName,
-      template: templateName,
+      id: tenantName,
+      definition: definitionName,
     });
     assert.equal(tenantCreate.error, null, `tenant creation failed: ${tenantCreate.error?.message}`);
     tenantCreated = true;
 
-    const tenant = client.database(tenantName);
+    const tenant = client.database(`global:${tenantName}`);
 
     await t.test("insert + select + filter flow", async () => {
       const first = await tenant.from("contacts").insert({
@@ -185,8 +194,8 @@ test("SDK <-> API contract: core tenant data flows", { skip: skipReason ?? false
         throw new Error(`failed to clean up tenant ${tenantName}: ${deleteTenant.error.message}`);
       }
     }
-    if (templateCreated) {
-      await apiRequest(`/platform/templates/${templateName}`, { method: "DELETE" });
+    if (definitionCreated) {
+      // Definition delete endpoint does not exist yet; leave cleanup to disposable test names.
     }
   }
 });

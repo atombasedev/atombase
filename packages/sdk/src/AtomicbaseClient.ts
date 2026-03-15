@@ -1,16 +1,17 @@
 import { AtomicbaseQueryBuilder } from "./AtomicbaseQueryBuilder.js";
 import { AtomicbaseBuilder } from "./AtomicbaseBuilder.js";
 import { AtomicbaseError } from "./AtomicbaseError.js";
+import { OrganizationAuthClient } from "./AuthClient.js";
 import { DatabasesClient } from "./DatabasesClient.js";
 import type { AtomicbaseClientOptions, AtomicbaseBatchResponse } from "./types.js";
 
 /**
  * Database-scoped client for operations.
- * Created by calling `client.database('database-name')`.
+ * Created by calling `client.database('global:db-id')` or another routed database target.
  *
  * @example
  * ```ts
- * const databaseClient = client.database('acme-corp')
+ * const databaseClient = client.database('global:acme-corp')
  *
  * // Query with fluent filters
  * const { data, error } = await databaseClient
@@ -151,7 +152,7 @@ export class DatabaseClient {
 /**
  * Atomicbase client for multi-database operations.
  * Use `.database()` to get a database-scoped client for querying.
- * Use `.databases` to manage databases (create, delete, sync).
+ * Use `.databases` to manage databases and `.orgs` for organization auth actions.
  *
  * @example
  * ```ts
@@ -164,12 +165,12 @@ export class DatabaseClient {
  *
  * // Manage databases
  * const { data: database } = await client.databases.create({
- *   name: 'acme-corp',
- *   template: 'my-app'
+ *   id: 'acme-corp',
+ *   definition: 'my-app'
  * })
  *
  * // Get a database-scoped client for operations
- * const acme = client.database('acme-corp')
+ * const acme = client.database('global:acme-corp')
  *
  * // Query the database
  * const { data, error } = await acme
@@ -195,21 +196,22 @@ export class AtomicbaseClient {
    *
    * // Create a new database
    * const { data: database } = await client.databases.create({
-   *   name: 'acme-corp',
-   *   template: 'my-app'
+   *   id: 'acme-corp',
+   *   definition: 'my-app'
    * })
    *
    * // Get database details
    * const { data: database } = await client.databases.get('acme-corp')
-   *
-   * // Sync database to latest template version
-   * const { data: result } = await client.databases.sync('acme-corp')
    *
    * // Delete a database
    * await client.databases.delete('acme-corp')
    * ```
    */
   readonly databases: DatabasesClient;
+  /**
+   * Client for organization membership and org management auth routes.
+   */
+  readonly orgs: OrganizationAuthClient;
 
   constructor(options: AtomicbaseClientOptions) {
     this.baseUrl = options.url.replace(/\/$/, "");
@@ -224,6 +226,12 @@ export class AtomicbaseClient {
       headers: this.headers,
       fetch: this.fetchFn,
     });
+    this.orgs = new OrganizationAuthClient({
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      headers: this.headers,
+      fetch: this.fetchFn,
+    });
   }
 
   /**
@@ -231,17 +239,17 @@ export class AtomicbaseClient {
    *
    * @example
    * ```ts
-   * const databaseClient = client.database('acme-corp')
+   * const databaseClient = client.database('global:acme-corp')
    * const { data } = await databaseClient.from('users').select()
    * ```
    */
-  database(databaseId: string): DatabaseClient {
+  database(databaseTarget: string): DatabaseClient {
     return new DatabaseClient({
       url: this.baseUrl,
       apiKey: this.apiKey,
       fetch: this.fetchFn,
       headers: this.headers,
-      databaseId,
+      databaseId: databaseTarget,
     });
   }
 }
@@ -257,7 +265,7 @@ export class AtomicbaseClient {
  * })
  *
  * // Get a database client and query
- * const { data } = await client.database('my-tenant').from('users').select()
+ * const { data } = await client.database('global:my-tenant').from('users').select()
  * ```
  */
 export function createClient(options: AtomicbaseClientOptions): AtomicbaseClient {

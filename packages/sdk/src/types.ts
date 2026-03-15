@@ -131,11 +131,15 @@ export type AtomicbaseBatchResponse<T extends unknown[] = unknown[]> =
  * Database information.
  */
 export interface Database {
-  id: number;
-  name: string;
+  id: string;
   token?: string;
-  templateId: number;
-  templateVersion: number;
+  definitionId: number;
+  definitionName?: string;
+  definitionType?: string;
+  definitionVersion: number;
+  ownerId?: string;
+  organizationId?: string;
+  organizationName?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -144,16 +148,51 @@ export interface Database {
  * Options for creating a new database.
  */
 export interface CreateDatabaseOptions {
-  /** Unique name for the database */
-  name: string;
-  /** Name of the template to use for the database schema */
-  template: string;
+  /** Unique id for the database */
+  id: string;
+  /** Name of the definition to use for the database schema */
+  definition: string;
+  userId?: string;
+  organizationId?: string;
+  organizationName?: string;
+  ownerId?: string;
+  maxMembers?: number;
 }
 
-/**
- * Response from syncing a database to the latest template version.
- */
-export interface SyncDatabaseResponse {
-  fromVersion: number;
-  toVersion: number;
+export interface OrganizationMember {
+  userId: string;
+  role: string;
+  status: string;
+  createdAt: string;
+}
+
+export interface Organization {
+  id: string;
+  name: string;
+  ownerId: string;
+  maxMembers?: number;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateOrganizationMemberOptions {
+  userId: string;
+  role: string;
+  status?: string;
+}
+
+export interface UpdateOrganizationMemberOptions {
+  role?: string;
+  status?: string;
+}
+
+export interface UpdateOrganizationOptions {
+  name?: string;
+  maxMembers?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TransferOrganizationOwnershipOptions {
+  userId: string;
 }

@@ -4,6 +4,7 @@
 
 export { AtomicbaseClient, DatabaseClient, createClient } from "./AtomicbaseClient.js";
 export { DatabasesClient } from "./DatabasesClient.js";
+export { OrganizationAuthClient } from "./AuthClient.js";
 
 // =============================================================================
 // Builders (for advanced usage / extension)
@@ -77,5 +78,10 @@ export type {
   // Database types (Platform API)
   Database,
   CreateDatabaseOptions,
-  SyncDatabaseResponse,
+  Organization,
+  OrganizationMember,
+  CreateOrganizationMemberOptions,
+  UpdateOrganizationMemberOptions,
+  UpdateOrganizationOptions,
+  TransferOrganizationOwnershipOptions,
 } from "./types.js";
