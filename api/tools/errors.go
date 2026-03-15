@@ -14,7 +14,7 @@ const (
 	CodeColumnNotFound      = "COLUMN_NOT_FOUND"
 	CodeDatabaseNotFound    = "DATABASE_NOT_FOUND"
 	CodeDatabaseOutOfSync   = "DATABASE_OUT_OF_SYNC"
-	CodeTemplateNotFound    = "TEMPLATE_NOT_FOUND"
+	CodeDefinitionNotFound  = "DEFINITION_NOT_FOUND"
 	CodeNoRelationship      = "NO_RELATIONSHIP"
 	CodeInvalidOperator     = "INVALID_OPERATOR"
 	CodeInvalidColumnType   = "INVALID_COLUMN_TYPE"
@@ -26,7 +26,7 @@ const (
 	CodeArrayTooLarge       = "ARRAY_TOO_LARGE"
 	CodeReservedTable       = "RESERVED_TABLE"
 	CodeNotDDLQuery         = "NOT_DDL_QUERY"
-	CodeTemplateInUse       = "TEMPLATE_IN_USE"
+	CodeDefinitionInUse     = "DEFINITION_IN_USE"
 	CodeUniqueViolation     = "UNIQUE_VIOLATION"
 	CodeForeignKeyViolation = "FOREIGN_KEY_VIOLATION"
 	CodeNotNullViolation    = "NOT_NULL_VIOLATION"
@@ -39,7 +39,7 @@ const (
 	// Platform API error codes
 	CodeInvalidJSON              = "INVALID_JSON"
 	CodeInvalidRequest           = "INVALID_REQUEST"
-	CodeTemplateExists           = "TEMPLATE_EXISTS"
+	CodeDefinitionExists         = "DEFINITION_EXISTS"
 	CodeNoChanges                = "NO_CHANGES"
 	CodeAtomicbaseBusy           = "ATOMICBASE_BUSY"
 	CodeDatabaseExists           = "DATABASE_EXISTS"
@@ -91,15 +91,15 @@ var (
 	ErrNotDDLQuery        = errors.New("only DDL statements are allowed (CREATE, ALTER, DROP)")
 	ErrQueryTooDeep       = errors.New("query nesting exceeds maximum depth")
 	ErrNoFTSIndex         = errors.New("no FTS index exists for table")
-	ErrTemplateNotFound   = errors.New("template not found")
-	ErrTemplateInUse      = errors.New("template is in use by one or more databases")
+	ErrDefinitionNotFound = errors.New("definition not found")
+	ErrDefinitionInUse    = errors.New("definition is in use by one or more databases")
 	ErrInArrayTooLarge    = errors.New("IN array exceeds maximum size")
 	ErrBatchTooLarge      = errors.New("batch exceeds maximum number of operations")
 	ErrMissingDatabase    = errors.New("Database header is required")
 
 	// Platform API errors
 	ErrInvalidJSON              = errors.New("invalid request body")
-	ErrTemplateExists           = errors.New("template already exists")
+	ErrDefinitionExists         = errors.New("definition already exists")
 	ErrNoChanges                = errors.New("no schema changes detected")
 	ErrAtomicbaseBusy           = errors.New("another migration is already in progress")
 	ErrDatabaseExists           = errors.New("database already exists")
@@ -148,7 +148,7 @@ func InvalidMigrationErr(msg string) error {
 	return fmt.Errorf("%w: %s", ErrInvalidMigration, msg)
 }
 
-// VersionNotFoundErr returns an error for missing template version.
+// VersionNotFoundErr returns an error for a missing definition version.
 func VersionNotFoundErr(version int) error {
 	return fmt.Errorf("%w: version %d", ErrVersionNotFound, version)
 }

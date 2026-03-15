@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	ErrDefinitionNotFound = tools.ErrTemplateNotFound
-	ErrDefinitionExists   = tools.ErrTemplateExists
+	ErrDefinitionNotFound = tools.ErrDefinitionNotFound
+	ErrDefinitionExists   = tools.ErrDefinitionExists
 )
 
 func schemaTableSet(schema Schema) map[string]struct{} {
@@ -192,6 +192,9 @@ func (api *API) pushDefinition(ctx context.Context, name string, req PushDefinit
 
 	plan, err := GenerateMigrationPlan(currentSchema, req.Schema, changes, req.Merge)
 	if err != nil {
+		return nil, tools.InvalidMigrationErr(err.Error())
+	}
+	if err := ValidateMigrationExecution(ctx, currentSchema, plan.SQL); err != nil {
 		return nil, tools.InvalidMigrationErr(err.Error())
 	}
 	schemaJSON, err := encodeSchemaForStorage(req.Schema)

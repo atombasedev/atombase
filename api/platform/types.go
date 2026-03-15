@@ -113,31 +113,6 @@ type ValidationError struct {
 	SQL     string `json:"sql,omitempty"`    // SQL that caused the error (for syntax errors)
 }
 
-// Template represents a schema template for multi-database systems.
-type Template struct {
-	ID             int32     `json:"id"`
-	Name           string    `json:"name"`
-	CurrentVersion int       `json:"currentVersion"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
-}
-
-// TemplateWithSchema represents a template with its current schema.
-type TemplateWithSchema struct {
-	Template
-	Schema Schema `json:"schema"`
-}
-
-// TemplateVersion represents a historical version of a template's schema.
-type TemplateVersion struct {
-	ID         int32     `json:"id"`
-	TemplateID int32     `json:"templateId"`
-	Version    int       `json:"version"`
-	Schema     Schema    `json:"schema"`
-	Checksum   string    `json:"checksum"`
-	CreatedAt  time.Time `json:"createdAt"`
-}
-
 // DatabaseRecord represents a provisioned database row returned by the Platform API.
 type DatabaseRecord struct {
 	ID                string    `json:"id"`
@@ -151,33 +126,6 @@ type DatabaseRecord struct {
 	OwnerID           string    `json:"ownerId,omitempty"`
 	OrganizationID    string    `json:"organizationId,omitempty"`
 	OrganizationName  string    `json:"organizationName,omitempty"`
-}
-
-// Request/Response types for API endpoints.
-
-// CreateTemplateRequest is the request body for POST /platform/templates.
-type CreateTemplateRequest struct {
-	Name   string `json:"name"`
-	Schema Schema `json:"schema"`
-}
-
-// DiffRequest is the request body for POST /platform/templates/{name}/diff.
-type DiffRequest struct {
-	Schema Schema `json:"schema"`
-}
-
-// MigrateRequest is the request body for POST /platform/templates/{name}/migrate.
-type MigrateRequest struct {
-	Schema Schema  `json:"schema"`
-	Merge  []Merge `json:"merge,omitempty"` // Indices of drop+add pairs that are renames
-}
-
-// MigrateResponse is the response for POST /platform/templates/{name}/migrate.
-type MigrateResponse struct {
-	TemplateID     int32  `json:"templateId,omitempty"`
-	CurrentVersion int    `json:"currentVersion,omitempty"`
-	DatabasesTotal int    `json:"databasesTotal,omitempty"`
-	Status         string `json:"status,omitempty"`
 }
 
 // RetryMigrationResponse is retained for internal compatibility.

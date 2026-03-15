@@ -582,6 +582,41 @@ func TestValidateMigrationPlan_WithProbeDB(t *testing.T) {
 	}
 }
 
+func TestValidateMigrationExecution_LocalProbeSucceeds(t *testing.T) {
+	current := Schema{Tables: []Table{
+		{Name: "posts", Pk: []string{"id"}, Columns: map[string]Col{
+			"id":    {Name: "id", Type: "INTEGER"},
+			"title": {Name: "title", Type: "TEXT"},
+		}},
+	}}
+
+	err := ValidateMigrationExecution(context.Background(), current, []string{
+		"ALTER TABLE [posts] RENAME COLUMN [title] TO [headline]",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateMigrationExecution_LocalProbeFails(t *testing.T) {
+	current := Schema{Tables: []Table{
+		{Name: "posts", Pk: []string{"id"}, Columns: map[string]Col{
+			"id":    {Name: "id", Type: "INTEGER"},
+			"title": {Name: "title", Type: "TEXT"},
+		}},
+	}}
+
+	err := ValidateMigrationExecution(context.Background(), current, []string{
+		"ALTER TABLE [posts] RENAME COLUMN [missing] TO [headline]",
+	})
+	if err == nil {
+		t.Fatal("expected local probe to fail")
+	}
+	if !strings.Contains(err.Error(), "local migration probe failed") {
+		t.Fatalf("expected local probe error, got %v", err)
+	}
+}
+
 // =============================================================================
 // Helper Functions
 // =============================================================================

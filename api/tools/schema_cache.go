@@ -6,11 +6,11 @@ import (
 	"fmt"
 )
 
-// CachedTemplate holds parsed schema and version.
+// CachedDefinition holds parsed schema and version.
 // For in-memory cache, the schema is stored as the actual Go struct.
 // For external caches, it's serialized to JSON.
-type CachedTemplate struct {
-	Schema  any `json:"-"`      // Parsed schema struct (in-memory only)
+type CachedDefinition struct {
+	Schema  any `json:"-"` // Parsed schema struct (in-memory only)
 	Version int `json:"version"`
 
 	// For external cache serialization
@@ -47,18 +47,18 @@ func GetCache() Cache {
 	return cache
 }
 
-// SetTemplate stores the schema and version for a template.
+// SetDefinition stores the schema and version for a definition.
 // Uses direct struct storage for in-memory cache (no serialization).
-func SetTemplate(templateID int32, version int, schema any) {
+func SetDefinition(definitionID int32, version int, schema any) {
 	if cache == nil {
 		return
 	}
 
-	key := fmt.Sprintf("template:%d", templateID)
+	key := fmt.Sprintf("definition:%d", definitionID)
 
 	// Fast path: in-memory cache stores struct directly
 	if memCache != nil {
-		memCache.SetValue(key, &CachedTemplate{Schema: schema, Version: version})
+		memCache.SetValue(key, &CachedDefinition{Schema: schema, Version: version})
 		return
 	}
 
@@ -67,48 +67,48 @@ func SetTemplate(templateID int32, version int, schema any) {
 	if err != nil {
 		return
 	}
-	data, err := json.Marshal(CachedTemplate{SchemaJSON: schemaJSON, Version: version})
+	data, err := json.Marshal(CachedDefinition{SchemaJSON: schemaJSON, Version: version})
 	if err != nil {
 		return
 	}
 	cache.Set(context.Background(), key, data)
 }
 
-// GetTemplate retrieves the cached template.
-// Returns the cached template and true if found.
-func GetTemplate(templateID int32) (CachedTemplate, bool) {
+// GetDefinition retrieves the cached definition.
+// Returns the cached definition and true if found.
+func GetDefinition(definitionID int32) (CachedDefinition, bool) {
 	if cache == nil {
-		return CachedTemplate{}, false
+		return CachedDefinition{}, false
 	}
 
-	key := fmt.Sprintf("template:%d", templateID)
+	key := fmt.Sprintf("definition:%d", definitionID)
 
 	// Fast path: in-memory cache returns struct directly
 	if memCache != nil {
 		if val := memCache.GetValue(key); val != nil {
-			return *val.(*CachedTemplate), true
+			return *val.(*CachedDefinition), true
 		}
-		return CachedTemplate{}, false
+		return CachedDefinition{}, false
 	}
 
 	// External cache: deserialize from JSON
 	data, err := cache.Get(context.Background(), key)
 	if err != nil || data == nil {
-		return CachedTemplate{}, false
+		return CachedDefinition{}, false
 	}
-	var cached CachedTemplate
+	var cached CachedDefinition
 	if err := json.Unmarshal(data, &cached); err != nil {
-		return CachedTemplate{}, false
+		return CachedDefinition{}, false
 	}
 	return cached, true
 }
 
-// InvalidateTemplate removes a template from cache.
-func InvalidateTemplate(templateID int32) {
+// InvalidateDefinition removes a definition from cache.
+func InvalidateDefinition(definitionID int32) {
 	if cache == nil {
 		return
 	}
-	key := fmt.Sprintf("template:%d", templateID)
+	key := fmt.Sprintf("definition:%d", definitionID)
 
 	if memCache != nil {
 		memCache.DeleteValue(key)

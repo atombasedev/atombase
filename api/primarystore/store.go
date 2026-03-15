@@ -30,8 +30,6 @@ type DefinitionMigration struct {
 	CreatedAt    string
 }
 
-type TemplateMigration = DefinitionMigration
-
 type Store struct {
 	conn *sql.DB
 }

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // ValidationResult contains the results of migration validation.
@@ -34,6 +36,50 @@ func ValidateMigrationPlan(ctx context.Context, newSchema Schema, probeDB *sql.D
 
 	result.Valid = len(result.Errors) == 0
 	return result, nil
+}
+
+func ValidateMigrationExecution(ctx context.Context, currentSchema Schema, migrationSQL []string) error {
+	if len(migrationSQL) == 0 {
+		return nil
+	}
+
+	probeDB, err := buildMigrationProbeDB(currentSchema)
+	if err != nil {
+		return fmt.Errorf("failed to build local probe database: %w", err)
+	}
+	defer probeDB.Close()
+
+	for _, stmt := range migrationSQL {
+		if _, err := probeDB.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("local migration probe failed for %q: %w", stmt, err)
+		}
+	}
+
+	return nil
+}
+
+func buildMigrationProbeDB(schema Schema) (*sql.DB, error) {
+	probeDB, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		return nil, err
+	}
+
+	cleanup := func(runErr error) (*sql.DB, error) {
+		_ = probeDB.Close()
+		return nil, runErr
+	}
+
+	if _, err := probeDB.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		return cleanup(err)
+	}
+
+	for _, stmt := range generateSchemaSQL(schema) {
+		if _, err := probeDB.Exec(stmt); err != nil {
+			return cleanup(fmt.Errorf("failed to apply schema statement %q: %w", stmt, err))
+		}
+	}
+
+	return probeDB, nil
 }
 
 // validateFKReferences checks that all foreign key references point to tables that exist in the schema.

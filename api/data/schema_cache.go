@@ -11,7 +11,7 @@ import (
 // GetCachedDefinition retrieves the current schema and version for a definition.
 func GetCachedDefinition(db *sql.DB, definitionID int32) (SchemaCache, int, error) {
 	// Check cache first
-	if cached, ok := tools.GetTemplate(definitionID); ok {
+	if cached, ok := tools.GetDefinition(definitionID); ok {
 		// Fast path: in-memory cache stores struct directly
 		if cached.Schema != nil {
 			if schema, ok := cached.Schema.(SchemaCache); ok {
@@ -34,13 +34,8 @@ func GetCachedDefinition(db *sql.DB, definitionID int32) (SchemaCache, int, erro
 		return SchemaCache{}, 0, err
 	}
 
-	tools.SetTemplate(definitionID, version, schema)
+	tools.SetDefinition(definitionID, version, schema)
 	return schema, version, nil
-}
-
-// GetCachedTemplate is retained temporarily while tests and helpers move to definition naming.
-func GetCachedTemplate(db *sql.DB, definitionID int32) (SchemaCache, int, error) {
-	return GetCachedDefinition(db, definitionID)
 }
 
 // loadCurrentSchemaFromDB loads the current schema version for a definition.

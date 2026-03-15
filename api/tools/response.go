@@ -57,13 +57,13 @@ func BuildAPIError(err error) (int, APIError) {
 		return http.StatusConflict, APIError{
 			Code:    CodeDatabaseOutOfSync,
 			Message: err.Error(),
-			Hint:    "The database requested is out of sync with it's template. Use the platform API or CLI to sync it.",
+			Hint:    "The database requested is out of sync with its definition. Use the platform API or CLI to sync it.",
 		}
-	case errors.Is(err, ErrTemplateNotFound):
+	case errors.Is(err, ErrDefinitionNotFound):
 		return http.StatusNotFound, APIError{
-			Code:    CodeTemplateNotFound,
+			Code:    CodeDefinitionNotFound,
 			Message: err.Error(),
-			Hint:    "The specified template does not exist. Use GET /platform/templates to list available templates.",
+			Hint:    "The specified definition does not exist. Use GET /platform/definitions to list available definitions.",
 		}
 	case errors.Is(err, ErrNoRelationship):
 		return http.StatusNotFound, APIError{
@@ -71,11 +71,11 @@ func BuildAPIError(err error) (int, APIError) {
 			Message: err.Error(),
 			Hint:    "No foreign key relationship exists between these tables. Define a foreign key or query tables separately.",
 		}
-	case errors.Is(err, ErrTemplateInUse):
+	case errors.Is(err, ErrDefinitionInUse):
 		return http.StatusConflict, APIError{
-			Code:    CodeTemplateInUse,
+			Code:    CodeDefinitionInUse,
 			Message: err.Error(),
-			Hint:    "Remove all databases using this template before deleting it, or use force=true.",
+			Hint:    "Remove all databases using this definition before deleting it, or use force=true.",
 		}
 	case errors.Is(err, ErrInvalidOperator):
 		return http.StatusBadRequest, APIError{
@@ -154,11 +154,11 @@ func BuildAPIError(err error) (int, APIError) {
 			Message: err.Error(),
 			Hint:    "Check JSON syntax.",
 		}
-	case errors.Is(err, ErrTemplateExists):
+	case errors.Is(err, ErrDefinitionExists):
 		return http.StatusConflict, APIError{
-			Code:    CodeTemplateExists,
+			Code:    CodeDefinitionExists,
 			Message: err.Error(),
-			Hint:    "Choose a different name or delete the existing template first.",
+			Hint:    "Choose a different name or delete the existing definition first.",
 		}
 	case errors.Is(err, ErrNoChanges):
 		return http.StatusBadRequest, APIError{
@@ -188,7 +188,7 @@ func BuildAPIError(err error) (int, APIError) {
 		return http.StatusBadRequest, APIError{
 			Code:    CodeDatabaseInSync,
 			Message: err.Error(),
-			Hint:    "The database is already at the current template version.",
+			Hint:    "The database is already at the current definition version.",
 		}
 	case errors.Is(err, ErrMigrationNotFound):
 		return http.StatusNotFound, APIError{
@@ -200,7 +200,7 @@ func BuildAPIError(err error) (int, APIError) {
 		return http.StatusNotFound, APIError{
 			Code:    CodeVersionNotFound,
 			Message: err.Error(),
-			Hint:    "Use GET /platform/templates/{name}/history to see available versions.",
+			Hint:    "Use GET /platform/definitions/{name}/history to see available versions.",
 		}
 	case errors.Is(err, ErrInvalidMigration):
 		return http.StatusBadRequest, APIError{

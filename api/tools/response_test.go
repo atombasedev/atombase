@@ -59,11 +59,11 @@ func TestBuildAPIError(t *testing.T) {
 			wantMsg:    ErrDatabaseOutOfSync.Error(),
 		},
 		{
-			name:       "template not found sentinel",
-			err:        ErrTemplateNotFound,
+			name:       "definition not found sentinel",
+			err:        ErrDefinitionNotFound,
 			wantStatus: http.StatusNotFound,
-			wantCode:   CodeTemplateNotFound,
-			wantMsg:    ErrTemplateNotFound.Error(),
+			wantCode:   CodeDefinitionNotFound,
+			wantMsg:    ErrDefinitionNotFound.Error(),
 		},
 		{
 			name:       "no relationship sentinel",
@@ -73,11 +73,11 @@ func TestBuildAPIError(t *testing.T) {
 			wantMsg:    "no relationship exists between tables: users and posts",
 		},
 		{
-			name:       "template in use sentinel",
-			err:        ErrTemplateInUse,
+			name:       "definition in use sentinel",
+			err:        ErrDefinitionInUse,
 			wantStatus: http.StatusConflict,
-			wantCode:   CodeTemplateInUse,
-			wantMsg:    ErrTemplateInUse.Error(),
+			wantCode:   CodeDefinitionInUse,
+			wantMsg:    ErrDefinitionInUse.Error(),
 		},
 		{
 			name:       "invalid operator sentinel",
@@ -178,11 +178,11 @@ func TestBuildAPIError(t *testing.T) {
 			wantMsg:    "column not found",
 		},
 		{
-			name:       "platform template exists",
-			err:        ErrTemplateExists,
+			name:       "platform definition exists",
+			err:        ErrDefinitionExists,
 			wantStatus: http.StatusConflict,
-			wantCode:   CodeTemplateExists,
-			wantMsg:    ErrTemplateExists.Error(),
+			wantCode:   CodeDefinitionExists,
+			wantMsg:    ErrDefinitionExists.Error(),
 		},
 		{
 			name:       "platform invalid json",

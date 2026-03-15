@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/atombasedev/atombase/primarystore"
@@ -346,5 +347,76 @@ func TestPushDefinition_UsesMergeAndProbesExistingDatabase(t *testing.T) {
 	}
 	if databaseVersion != 2 {
 		t.Fatalf("expected probed database version 2, got %d", databaseVersion)
+	}
+}
+
+func TestPushDefinition_LocalProbeFailureStopsRemoteProbe(t *testing.T) {
+	api, db := setupPlatformAPI(t)
+	defer db.Close()
+
+	initial := Schema{Tables: []Table{{
+		Name: "posts",
+		Pk:   []string{"id"},
+		Columns: map[string]Col{
+			"id":    {Name: "id", Type: "INTEGER"},
+			"title": {Name: "title", Type: "TEXT"},
+		},
+	}}}
+
+	created, err := api.createDefinition(context.Background(), CreateDefinitionRequest{
+		Name:   "posts",
+		Type:   "organization",
+		Roles:  []string{"owner", "member"},
+		Schema: initial,
+		Access: map[string]OperationPolicy{
+			"posts": {Select: &Condition{Field: "auth.status", Op: "eq", Value: "member"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("createDefinition failed: %v", err)
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO atombase_databases (id, definition_id, definition_version, auth_token_encrypted, created_at, updated_at)
+		VALUES ('org-db', ?, 1, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+	`, created.ID, []byte("probe-token"))
+	if err != nil {
+		t.Fatalf("failed to insert database row: %v", err)
+	}
+
+	oldBatch := batchExecuteWithTokenFn
+	defer func() {
+		batchExecuteWithTokenFn = oldBatch
+	}()
+
+	remoteCalled := false
+	batchExecuteWithTokenFn = func(ctx context.Context, dbName, token string, statements []string) error {
+		remoteCalled = true
+		return nil
+	}
+
+	next := Schema{Tables: []Table{{
+		Name: "posts",
+		Pk:   []string{"id"},
+		Columns: map[string]Col{
+			"id":     {Name: "id", Type: "INTEGER"},
+			"broken": {Name: "broken", Type: "TEXT", Default: map[string]any{"sql": "("}},
+		},
+	}}}
+
+	_, err = api.pushDefinition(context.Background(), "posts", PushDefinitionRequest{
+		Schema: next,
+		Access: map[string]OperationPolicy{
+			"posts": {Select: &Condition{Field: "auth.status", Op: "eq", Value: "member"}},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected pushDefinition to fail on local probe")
+	}
+	if !strings.Contains(err.Error(), "local migration probe failed") {
+		t.Fatalf("expected local probe invalid migration error, got %v", err)
+	}
+	if remoteCalled {
+		t.Fatal("expected local probe failure to stop remote probe")
 	}
 }

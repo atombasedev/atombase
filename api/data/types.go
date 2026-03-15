@@ -59,40 +59,6 @@ type Index = sharedschema.Index
 type Col = sharedschema.Col
 type Generated = sharedschema.Generated
 
-// SchemaTemplate represents a reusable schema template for multi-tenant databases.
-// Daughter databases associated with a template will inherit its schema.
-type SchemaTemplate struct {
-	ID             int32   `json:"id"`
-	Name           string  `json:"name"`
-	Tables         []Table `json:"tables"`         // Table definitions for this template
-	CurrentVersion int     `json:"currentVersion"` // Current schema version
-	CreatedAt      string  `json:"createdAt"`      // ISO timestamp
-	UpdatedAt      string  `json:"updatedAt"`      // ISO timestamp
-}
-
-// TemplateVersion represents a historical version of a schema template.
-type TemplateVersion struct {
-	ID         int32   `json:"id"`
-	TemplateID int32   `json:"templateId"`
-	Version    int     `json:"version"`
-	Tables     []Table `json:"tables"`
-	Checksum   string  `json:"checksum"`
-	Changes    string  `json:"changes,omitempty"` // JSON description of changes from previous version
-	CreatedAt  string  `json:"createdAt"`
-}
-
-// SchemaChange represents a single change between schema versions.
-type SchemaChange struct {
-	Type        string `json:"type"`                // add_table, drop_table, add_column, drop_column, modify_column, rename_column, rename_table
-	Table       string `json:"table"`               // Table name
-	Column      string `json:"column,omitempty"`    // Column name (for column changes)
-	SQL         string `json:"sql,omitempty"`       // SQL statement to apply this change
-	RequiresMig bool   `json:"requiresMigration"`   // Whether this change requires data migration
-	Ambiguous   bool   `json:"ambiguous,omitempty"` // Whether this change needs user confirmation
-	OldName     string `json:"oldName,omitempty"`   // For potential renames, the old name
-	Reason      string `json:"reason,omitempty"`    // Explanation for ambiguous changes
-}
-
 // Executor is an interface that both *sql.DB and *sql.Tx implement.
 // This allows query methods to work with either a direct connection or a transaction.
 type Executor interface {

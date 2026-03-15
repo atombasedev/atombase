@@ -134,16 +134,16 @@ func TestTablesToSchemaCache_TablesMap(t *testing.T) {
 	}
 }
 
-// TestSchemaCache_StoreAndRetrieve verifies the template cache in tools package.
+// TestSchemaCache_StoreAndRetrieve verifies the definition cache in tools package.
 func TestSchemaCache_StoreAndRetrieve(t *testing.T) {
 	// Store a schema with version
 	schema := TablesToSchemaCache([]Table{testTableUsers})
-	tools.SetTemplate(999, 1, schema)
+	tools.SetDefinition(999, 1, schema)
 
 	// Retrieve it
-	cached, ok := tools.GetTemplate(999)
+	cached, ok := tools.GetDefinition(999)
 	if !ok {
-		t.Fatal("expected to find cached template")
+		t.Fatal("expected to find cached definition")
 	}
 
 	if cached.Version != 1 {
@@ -172,66 +172,66 @@ func TestSchemaCache_StoreAndRetrieve(t *testing.T) {
 	}
 
 	// Clean up
-	tools.InvalidateTemplate(999)
+	tools.InvalidateDefinition(999)
 }
 
 // TestSchemaCache_Miss verifies cache miss behavior.
 func TestSchemaCache_Miss(t *testing.T) {
-	_, ok := tools.GetTemplate(99999)
+	_, ok := tools.GetDefinition(99999)
 	if ok {
-		t.Error("expected cache miss for non-existent template")
+		t.Error("expected cache miss for non-existent definition")
 	}
 }
 
 // TestSchemaCache_Invalidate verifies cache invalidation.
 func TestSchemaCache_Invalidate(t *testing.T) {
 	schema := TablesToSchemaCache([]Table{testTableUsers})
-	tools.SetTemplate(998, 1, schema)
+	tools.SetDefinition(998, 1, schema)
 
 	// Verify it's there
-	_, ok := tools.GetTemplate(998)
+	_, ok := tools.GetDefinition(998)
 	if !ok {
-		t.Fatal("expected to find cached template before invalidation")
+		t.Fatal("expected to find cached definition before invalidation")
 	}
 
 	// Invalidate
-	tools.InvalidateTemplate(998)
+	tools.InvalidateDefinition(998)
 
 	// Verify it's gone
-	_, ok = tools.GetTemplate(998)
+	_, ok = tools.GetDefinition(998)
 	if ok {
 		t.Error("expected cache miss after invalidation")
 	}
 }
 
-// TestSchemaCache_VersionUpdate verifies updating a template's version in cache.
+// TestSchemaCache_VersionUpdate verifies updating a definition's version in cache.
 func TestSchemaCache_VersionUpdate(t *testing.T) {
 	schema := TablesToSchemaCache([]Table{testTableUsers})
 
 	// Store version 1
-	tools.SetTemplate(997, 1, schema)
+	tools.SetDefinition(997, 1, schema)
 
 	// Verify version 1
-	cached, ok := tools.GetTemplate(997)
+	cached, ok := tools.GetDefinition(997)
 	if !ok {
-		t.Fatal("expected to find cached template")
+		t.Fatal("expected to find cached definition")
 	}
 	if cached.Version != 1 {
 		t.Errorf("expected version 1, got %d", cached.Version)
 	}
 
-	// Update to version 3 (simulates template migration)
-	tools.SetTemplate(997, 3, schema)
+	// Update to version 3 (simulates a definition migration)
+	tools.SetDefinition(997, 3, schema)
 
 	// Verify version 3
-	cached, ok = tools.GetTemplate(997)
+	cached, ok = tools.GetDefinition(997)
 	if !ok {
-		t.Fatal("expected to find cached template after update")
+		t.Fatal("expected to find cached definition after update")
 	}
 	if cached.Version != 3 {
 		t.Errorf("expected version 3 after update, got %d", cached.Version)
 	}
 
 	// Clean up
-	tools.InvalidateTemplate(997)
+	tools.InvalidateDefinition(997)
 }
