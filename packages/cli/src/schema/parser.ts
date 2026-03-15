@@ -5,6 +5,8 @@ import type { DefinitionDefinition } from "@atomicbase/definitions";
 
 const jiti = createJiti(import.meta.url);
 
+const DEFINITION_SUFFIXES = [".global.ts", ".user.ts", ".org.ts"] as const;
+
 export async function loadSchema(filePath: string): Promise<DefinitionDefinition> {
   const absolutePath = resolve(process.cwd(), filePath);
 
@@ -41,6 +43,8 @@ export async function loadSchema(filePath: string): Promise<DefinitionDefinition
         `  Expected defineGlobal(...), defineUser(...), or defineOrg(...).\n`
       );
     }
+
+    validateDefinitionFileName(fileName, definition.type);
 
     if (!definition.schema || !Array.isArray(definition.schema.tables)) {
       throw new Error(
@@ -97,6 +101,8 @@ export async function loadSchema(filePath: string): Promise<DefinitionDefinition
     if (err instanceof Error && (
       err.message.includes("No default export") ||
       err.message.includes("Invalid definition type") ||
+      err.message.includes("Invalid definition filename") ||
+      err.message.includes("Definition type does not match filename") ||
       err.message.includes("Invalid schema") ||
       err.message.includes("Invalid access block") ||
       err.message.includes("has an empty name") ||
@@ -135,8 +141,29 @@ export async function loadSchema(filePath: string): Promise<DefinitionDefinition
 
 function deriveDefinitionName(fileName: string): string {
   return fileName
-    .replace(/\.(global|user|org|definition|schema)\.(t|j)s$/, "")
+    .replace(/\.(global|user|org)\.ts$/, "")
     .replace(/^\+/, "");
+}
+
+function validateDefinitionFileName(fileName: string, type: DefinitionDefinition["type"]): void {
+  if (!DEFINITION_SUFFIXES.some((suffix) => fileName.endsWith(suffix))) {
+    throw new Error(
+      `Invalid definition filename: ${fileName}\n\n` +
+      `  Definitions must use one of these suffixes:\n` +
+      `    *.global.ts\n` +
+      `    *.user.ts\n` +
+      `    *.org.ts\n`
+    );
+  }
+
+  const expectedSuffix = type === "global" ? ".global.ts" : type === "user" ? ".user.ts" : ".org.ts";
+
+  if (!fileName.endsWith(expectedSuffix)) {
+    throw new Error(
+      `Definition type does not match filename in ${fileName}\n\n` +
+      `  ${type} definitions must be defined in *${expectedSuffix} files.\n`
+    );
+  }
 }
 
 export function findSchemaFiles(dir: string): string[] {
@@ -149,16 +176,9 @@ export function findSchemaFiles(dir: string): string[] {
   const files = readdirSync(absoluteDir);
   return files
     .filter((f) =>
-      f.endsWith(".schema.ts") ||
-      f.endsWith(".schema.js") ||
       f.endsWith(".global.ts") ||
-      f.endsWith(".global.js") ||
       f.endsWith(".user.ts") ||
-      f.endsWith(".user.js") ||
-      f.endsWith(".org.ts") ||
-      f.endsWith(".org.js") ||
-      f.endsWith(".definition.ts") ||
-      f.endsWith(".definition.js")
+      f.endsWith(".org.ts")
     )
     .map((f) => resolve(absoluteDir, f));
 }

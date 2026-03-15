@@ -84,7 +84,7 @@ func TestResolveDatabaseTarget(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO atombase_users (id, database_id) VALUES ('user-1', 'user-notes-db')`)
 	_, _ = db.Exec(`INSERT INTO atombase_organizations (id, database_id, name, owner_id) VALUES ('org-1', 'org-db', 'Acme', 'user-1')`)
 
-	global, err := store.ResolveDatabaseTarget(context.Background(), definitions.Principal{}, "global:market")
+	global, err := store.ResolveDatabaseTarget(context.Background(), definitions.Principal{}, "global:global-market")
 	if err != nil {
 		t.Fatalf("resolve global failed: %v", err)
 	}

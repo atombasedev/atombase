@@ -107,16 +107,16 @@ The auth middleware injects only the caller identity. Definitions and tenant-loc
 
 ## Database Targeting
 
-Every data request must include a `Database` header. The value is not a raw database id; it is a routed target:
+Every data request must include a `Database` header. The value is a routed target:
 
-- `global:<definition-name>`
+- `global:<database-id>`
 - `user:<definition-name>`
 - `org:<organization-id>`
 
 Examples:
 
 ```http
-Database: global:public-catalog
+Database: global:public-catalog-prod
 Database: user:notes
 Database: org:org_123
 ```

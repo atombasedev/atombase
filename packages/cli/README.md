@@ -90,6 +90,10 @@ npx atomicbase databases delete <id> [-f]
 
 Define definitions in the `schemas/` directory:
 
+- global definitions must be in `*.global.ts`
+- user definitions must be in `*.user.ts`
+- organization definitions must be in `*.org.ts`
+
 ```typescript
 // schemas/my-app.global.ts
 import { defineGlobal, defineSchema, defineAccess, definePolicy, defineTable, c, r } from "@atomicbase/definitions";

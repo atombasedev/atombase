@@ -130,9 +130,9 @@ func (s *Store) ResolveDatabaseTarget(ctx context.Context, principal definitions
 	case definitions.DefinitionTypeGlobal:
 		row = s.conn.QueryRowContext(ctx, `
 			SELECT d.id, d.definition_id, def.name, def.definition_type, d.definition_version, d.auth_token_encrypted
-			FROM atombase_definitions def
-			JOIN atombase_databases d ON d.definition_id = def.id
-			WHERE def.name = ? AND def.definition_type = 'global'
+			FROM atombase_databases d
+			JOIN atombase_definitions def ON def.id = d.definition_id
+			WHERE d.id = ? AND def.definition_type = 'global'
 		`, name)
 	case definitions.DefinitionTypeUser:
 		if principal.UserID == "" && !principal.IsService {
