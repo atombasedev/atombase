@@ -105,6 +105,15 @@ Data routes accept:
 
 The auth middleware injects only the caller identity. Definitions and tenant-local policies decide what the caller can do.
 
+### Auth API
+
+Auth routes accept:
+
+- `Authorization: Bearer <session-id>.<secret>` for member-scoped organization actions
+- `Authorization: Bearer service.<ATOMICBASE_API_KEY>` for service-scoped organization actions
+
+For session-backed callers, organization existence is only confirmed to members of that organization. Non-members get the same authorization failure for both missing and real organizations. Service auth can manage organizations directly.
+
 ## Database Targeting
 
 Every data request must include a `Database` header. The value is a routed target:
@@ -272,7 +281,7 @@ curl -X POST http://localhost:8080/platform/definitions \
   -d '{
     "name": "workspace",
     "type": "organization",
-    "roles": ["owner", "member"],
+    "roles": ["owner", "admin", "member", "viewer"],
     "schema": {
       "tables": [
         {
@@ -290,6 +299,21 @@ curl -X POST http://localhost:8080/platform/definitions \
       "projects": {
         "select": {"field": "auth.status", "op": "eq", "value": "member"},
         "update": {"field": "auth.role", "op": "eq", "value": "owner"}
+      }
+    },
+    "management": {
+      "owner": {
+        "invite": {"any": true},
+        "assignRole": {"any": true},
+        "removeMember": {"any": true},
+        "updateOrg": true,
+        "deleteOrg": true,
+        "transferOwnership": true
+      },
+      "admin": {
+        "invite": ["member", "viewer"],
+        "assignRole": ["member", "viewer"],
+        "removeMember": ["member", "viewer"]
       }
     }
   }'
@@ -355,6 +379,63 @@ Definition type determines provisioning semantics:
 
 Organization databases get tenant-local `atombase_membership` storage created during provisioning.
 
+## Auth API
+
+### Routes
+
+- `POST /auth/magic-link/start`
+- `GET /auth/magic-link/complete`
+- `POST /auth/signout`
+- `GET /auth/me`
+- `GET /auth/orgs/{orgID}/members`
+- `POST /auth/orgs/{orgID}/members`
+- `PATCH /auth/orgs/{orgID}/members/{userID}`
+- `DELETE /auth/orgs/{orgID}/members/{userID}`
+- `PATCH /auth/orgs/{orgID}`
+- `DELETE /auth/orgs/{orgID}`
+- `POST /auth/orgs/{orgID}/transfer-ownership`
+
+### Membership Management
+
+Membership actions are driven by the definition's `management` policy, not hardcoded role names.
+
+```bash
+curl -X POST http://localhost:8080/auth/orgs/org_123/members \
+  -H "Authorization: Bearer session.secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "user_2",
+    "role": "viewer",
+    "status": "active"
+  }'
+```
+
+### Update Organization
+
+```bash
+curl -X PATCH http://localhost:8080/auth/orgs/org_123 \
+  -H "Authorization: Bearer session.secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Acme North America",
+    "metadata": {"region": "na"},
+    "maxMembers": 250
+  }'
+```
+
+### Transfer Ownership
+
+```bash
+curl -X POST http://localhost:8080/auth/orgs/org_123/transfer-ownership \
+  -H "Authorization: Bearer session.secret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "user_2"
+  }'
+```
+
+Transfer ownership updates both primary organization ownership and tenant-local owner membership.
+
 ## Architecture
 
 ```text
@@ -386,6 +467,7 @@ api/
 - primary auth resolves who the caller is
 - primary metadata resolves which tenant database and definition apply
 - definitions compile access policies into the tenant SQL path
+- definitions also drive org management permissions through stored `management` policies
 - organization membership is enforced inside tenant SQL, not through a separate primary lookup
 - each tenant request is treated as a single billed request target
 
@@ -400,6 +482,7 @@ api/
 - definitions-first runtime and storage model
 - per-tenant isolation with Turso-backed databases
 - policy-aware data API with tenant-side org membership enforcement
+- auth API with definition-driven org management and ownership transfer
 - lazy migrations plus definition version history
 - local and first-tenant probes during definition pushes
 
@@ -407,7 +490,6 @@ api/
 
 - batch support still exists but is not the long-term preferred API
 - migration validation does not yet seed local probe databases with representative data
-- auth API endpoints manage tenant-local organization membership at `/auth/orgs/{orgID}/members`
 - SQLite constraints still apply for write concurrency and some schema changes
 
 ## Operational Notes
