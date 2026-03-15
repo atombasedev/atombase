@@ -3,9 +3,6 @@ import { createInterface } from "readline";
 import { loadConfig } from "../config.js";
 import { ApiClient, ApiError } from "../api.js";
 
-/**
- * Prompt user with a yes/no question.
- */
 async function confirm(question: string): Promise<boolean> {
   const rl = createInterface({
     input: process.stdin,
@@ -21,40 +18,30 @@ async function confirm(question: string): Promise<boolean> {
   });
 }
 
-/**
- * Format a date string for display.
- */
 function formatDate(dateStr: string): string {
-  const date = new Date(dateStr);
-  return date.toLocaleString();
+  return new Date(dateStr).toLocaleString();
 }
 
-/**
- * List all databases.
- */
 async function listDatabases(): Promise<void> {
   const config = await loadConfig();
   const api = new ApiClient(config);
 
   try {
     const databases = await api.listDatabases();
-
     if (databases.length === 0) {
       console.log("No databases found.");
-      console.log("\nCreate one with: atomicbase databases create <name> --template <template>");
+      console.log("\nCreate one with: atomicbase databases create <id> --definition <definition>");
       return;
     }
 
-    console.log("Tenants:\n");
-    console.log("  NAME                 TEMPLATE    VERSION    CREATED");
-    console.log("  " + "-".repeat(70));
+    console.log("Databases:\n");
+    console.log("  ID                   DEFINITION           TYPE           VERSION    CREATED");
+    console.log("  " + "-".repeat(92));
 
     for (const database of databases) {
-      const name = database.name.padEnd(20);
-      const templateId = String(database.templateId).padEnd(11);
-      const version = String(database.templateVersion).padEnd(10);
-      const created = formatDate(database.createdAt);
-      console.log(`  ${name} ${templateId} ${version} ${created}`);
+      console.log(
+        `  ${database.id.padEnd(20)} ${(database.definitionName ?? "").padEnd(20)} ${(database.definitionType ?? "").padEnd(14)} ${String(database.definitionVersion).padEnd(10)} ${formatDate(database.createdAt)}`
+      );
     }
 
     console.log(`\n  Total: ${databases.length} database(s)`);
@@ -64,24 +51,31 @@ async function listDatabases(): Promise<void> {
   }
 }
 
-/**
- * Get database details.
- */
-async function getDatabase(name: string): Promise<void> {
+async function getDatabase(id: string): Promise<void> {
   const config = await loadConfig();
   const api = new ApiClient(config);
 
   try {
-    const database = await api.getDatabase(name);
-
-    console.log(`Database: ${database.name}\n`);
-    console.log(`  ID:               ${database.id}`);
-    console.log(`  Template ID:      ${database.templateId}`);
-    console.log(`  Template Version: ${database.templateVersion}`);
-    console.log(`  Created:          ${formatDate(database.createdAt)}`);
-    console.log(`  Updated:          ${formatDate(database.updatedAt)}`);
+    const database = await api.getDatabase(id);
+    console.log(`Database: ${database.id}\n`);
+    console.log(`  ID:                 ${database.id}`);
+    console.log(`  Definition ID:      ${database.definitionId}`);
+    console.log(`  Definition Name:    ${database.definitionName ?? ""}`);
+    console.log(`  Definition Type:    ${database.definitionType ?? ""}`);
+    console.log(`  Definition Version: ${database.definitionVersion}`);
+    console.log(`  Created:            ${formatDate(database.createdAt)}`);
+    console.log(`  Updated:            ${formatDate(database.updatedAt)}`);
+    if (database.organizationId) {
+      console.log(`  Organization ID:    ${database.organizationId}`);
+    }
+    if (database.organizationName) {
+      console.log(`  Organization Name:  ${database.organizationName}`);
+    }
+    if (database.ownerId) {
+      console.log(`  Owner ID:           ${database.ownerId}`);
+    }
     if (database.token) {
-      console.log(`  Token:            ${database.token}`);
+      console.log(`  Token:              ${database.token}`);
     }
   } catch (err) {
     console.error("Failed to get database:", err instanceof ApiError ? err.format() : err);
@@ -89,130 +83,112 @@ async function getDatabase(name: string): Promise<void> {
   }
 }
 
-/**
- * Create a new database.
- */
-async function createDatabase(name: string, template: string): Promise<void> {
+async function createDatabase(
+  id: string,
+  options: {
+    definition: string;
+    userId?: string;
+    organizationId?: string;
+    organizationName?: string;
+    ownerId?: string;
+    maxMembers?: string;
+  }
+): Promise<void> {
   const config = await loadConfig();
   const api = new ApiClient(config);
 
-  console.log(`Creating database "${name}" with template "${template}"...`);
+  console.log(`Creating database "${id}" from definition "${options.definition}"...`);
 
   try {
-    const database = await api.createDatabase(name, template);
+    const database = await api.createDatabase({
+      id,
+      definition: options.definition,
+      userId: options.userId,
+      organizationId: options.organizationId,
+      organizationName: options.organizationName,
+      ownerId: options.ownerId,
+      maxMembers: options.maxMembers ? Number(options.maxMembers) : undefined,
+    });
 
-    console.log(`\n✓ Created database "${database.name}"`);
-    console.log(`  ID:               ${database.id}`);
-    console.log(`  Template ID:      ${database.templateId}`);
-    console.log(`  Template Version: ${database.templateVersion}`);
+    console.log(`\nCreated database "${database.id}"`);
+    console.log(`  Definition:         ${database.definitionName ?? options.definition}`);
+    console.log(`  Definition Type:    ${database.definitionType ?? ""}`);
+    console.log(`  Definition Version: ${database.definitionVersion}`);
+    if (database.organizationId) {
+      console.log(`  Organization ID:    ${database.organizationId}`);
+    }
     if (database.token) {
-      console.log(`  Token:            ${database.token}`);
+      console.log(`  Token:              ${database.token}`);
     }
   } catch (err) {
-    console.error("\n✗ Failed to create database:", err instanceof ApiError ? err.format() : err);
+    console.error("\nFailed to create database:", err instanceof ApiError ? err.format() : err);
     process.exit(1);
   }
 }
 
-/**
- * Delete a database.
- */
-async function deleteDatabase(name: string, force: boolean): Promise<void> {
+async function deleteDatabase(id: string, force: boolean): Promise<void> {
   const config = await loadConfig();
   const api = new ApiClient(config);
 
   if (!force) {
-    // Verify database exists first
     try {
-      await api.getDatabase(name);
+      await api.getDatabase(id);
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
-        console.error(`Database "${name}" not found.`);
+        console.error(`Database "${id}" not found.`);
         process.exit(1);
       }
       throw err;
     }
 
-    const confirmed = await confirm(
-      `Are you sure you want to delete database "${name}"? This action cannot be undone.`
-    );
-    if (!confirmed) {
+    if (!(await confirm(`Are you sure you want to delete database "${id}"? This action cannot be undone.`))) {
       console.log("Aborted.");
       process.exit(0);
     }
   }
 
-  console.log(`Deleting database "${name}"...`);
-
+  console.log(`Deleting database "${id}"...`);
   try {
-    await api.deleteDatabase(name);
-    console.log(`✓ Deleted database "${name}"`);
+    await api.deleteDatabase(id);
+    console.log(`Deleted database "${id}"`);
   } catch (err) {
     console.error("Failed to delete database:", err instanceof ApiError ? err.format() : err);
     process.exit(1);
   }
 }
 
-/**
- * Sync a database to the latest template version.
- */
-async function syncDatabase(name: string): Promise<void> {
-  const config = await loadConfig();
-  const api = new ApiClient(config);
-
-  console.log(`Syncing database "${name}"...`);
-
-  try {
-    const result = await api.syncDatabase(name);
-    console.log(`✓ Synced database "${name}" from v${result.fromVersion} to v${result.toVersion}`);
-  } catch (err) {
-    if (err instanceof ApiError && err.code === "DATABASE_IN_SYNC") {
-      console.log(`✓ Database "${name}" is already at the latest version.`);
-      return;
-    }
-    console.error("Failed to sync database:", err instanceof ApiError ? err.format() : err);
-    process.exit(1);
-  }
-}
-
-// Main databases command with subcommands
 export const databasesCommand = new Command("databases")
   .description("Manage databases");
 
-// databases list
 databasesCommand
   .command("list")
   .alias("ls")
   .description("List all databases")
   .action(listDatabases);
 
-// databases get <name>
 databasesCommand
-  .command("get <name>")
+  .command("get <id>")
   .description("Get database details")
   .action(getDatabase);
 
-// databases create <name> --template <template>
 databasesCommand
-  .command("create <name>")
-  .description("Create a new database")
-  .requiredOption("-t, --template <template>", "Template name to use")
-  .action((name: string, options: { template: string }) => {
-    createDatabase(name, options.template);
+  .command("create <id>")
+  .description("Create a new database from a definition")
+  .requiredOption("-d, --definition <definition>", "Definition name to use")
+  .option("--user-id <userId>", "User id for user definitions")
+  .option("--organization-id <organizationId>", "Organization id for organization definitions")
+  .option("--organization-name <organizationName>", "Organization name for organization definitions")
+  .option("--owner-id <ownerId>", "Owner id for organization definitions")
+  .option("--max-members <maxMembers>", "Max members for organization definitions")
+  .action((id: string, options) => {
+    createDatabase(id, options);
   });
 
-// databases delete <name>
 databasesCommand
-  .command("delete <name>")
+  .command("delete <id>")
   .alias("rm")
   .description("Delete a database")
   .option("-f, --force", "Skip confirmation prompt")
-  .action((name: string, options: { force?: boolean }) => {
-    deleteDatabase(name, options.force ?? false);
+  .action((id: string, options: { force?: boolean }) => {
+    deleteDatabase(id, options.force ?? false);
   });
-
-// databases sync <name>
-databasesCommand
-  .command("sync <name>")
-  .description("Sync database to the latest template version")
-  .action(syncDatabase);

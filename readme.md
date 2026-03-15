@@ -74,22 +74,32 @@ npm install @atomicbase/sdk @atomicbase/definitions
 npx atomicbase init
 ```
 
-### 5) Define and push a schema template
+### 5) Define and push a definition
 
 ```typescript
-import { defineSchema, defineTable, c } from "@atomicbase/definitions";
+import { defineGlobal, defineSchema, defineAccess, definePolicy, defineTable, c, r } from "@atomicbase/definitions";
 
-export default defineSchema("my-app", {
-  users: defineTable({
-    id: c.integer().primaryKey(),
-    name: c.text().notNull(),
-    email: c.text().notNull().unique(),
+export default defineGlobal({
+  schema: defineSchema({
+    users: defineTable({
+      id: c.integer().primaryKey(),
+      name: c.text().notNull(),
+      email: c.text().notNull().unique(),
+    }),
+  }),
+  access: defineAccess({
+    users: definePolicy({
+      select: r.allow(),
+      insert: r.allow(),
+      update: r.allow(),
+      delete: r.allow(),
+    }),
   }),
 });
 ```
 
 ```bash
-npx atomicbase templates push
+npx atomicbase definitions push
 ```
 
 ### 6) Create a tenant database
@@ -102,7 +112,7 @@ const client = createClient({
   apiKey: "your-api-key",
 });
 
-await client.databases.create({ name: "acme-corp", template: "my-app" });
+await client.databases.create({ id: "acme-corp", definition: "my-app" });
 ```
 
 ### 7) Query tenant data

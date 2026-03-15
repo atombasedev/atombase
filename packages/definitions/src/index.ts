@@ -86,9 +86,62 @@ export interface TableDefinition {
  * Schema definition matching Go API's Schema type.
  */
 export interface SchemaDefinition {
-  name: string;
+  name?: string;
   tables: TableDefinition[];
 }
+
+export type DefinitionType = "global" | "user" | "organization";
+
+export interface Condition {
+  field?: string;
+  op?: string;
+  value?: unknown;
+  and?: Condition[];
+  or?: Condition[];
+  not?: Condition;
+}
+
+export interface OperationPolicy {
+  select?: Condition;
+  insert?: Condition;
+  update?: Condition;
+  delete?: Condition;
+}
+
+export type AccessDefinition = Record<string, OperationPolicy>;
+
+export interface GlobalDefinition {
+  name?: string;
+  type: "global";
+  schema: SchemaDefinition;
+  access: AccessDefinition;
+}
+
+export interface UserDefinition {
+  name?: string;
+  type: "user";
+  schema: SchemaDefinition;
+  access: AccessDefinition;
+}
+
+export interface OrganizationDefinition {
+  name?: string;
+  type: "organization";
+  roles?: string[];
+  maxMembers?: number;
+  schema: SchemaDefinition;
+  access: AccessDefinition;
+}
+
+export type DefinitionDefinition =
+  | GlobalDefinition
+  | UserDefinition
+  | OrganizationDefinition;
+
+type FieldReference = {
+  __kind: "field_ref";
+  path: string;
+};
 
 // =============================================================================
 // Column Builder
@@ -380,10 +433,14 @@ export function defineTable(
  * });
  * ```
  */
+export function defineSchema(name: string, tables: Record<string, TableBuilder>): SchemaDefinition;
+export function defineSchema(tables: Record<string, TableBuilder>): SchemaDefinition;
 export function defineSchema(
-  name: string,
-  tables: Record<string, TableBuilder>
+  nameOrTables: string | Record<string, TableBuilder>,
+  maybeTables?: Record<string, TableBuilder>
 ): SchemaDefinition {
+  const name = typeof nameOrTables === "string" ? nameOrTables : undefined;
+  const tables = typeof nameOrTables === "string" ? maybeTables ?? {} : nameOrTables;
   const tableDefinitions: TableDefinition[] = [];
 
   for (const [tableName, builder] of Object.entries(tables)) {
@@ -393,5 +450,112 @@ export function defineSchema(
   return {
     name,
     tables: tableDefinitions,
+  };
+}
+
+function field(path: string): FieldReference {
+  return { __kind: "field_ref", path };
+}
+
+function isFieldReference(value: unknown): value is FieldReference {
+  return typeof value === "object" && value !== null && (value as FieldReference).__kind === "field_ref";
+}
+
+function serializeValue(value: unknown): unknown {
+  if (isFieldReference(value)) {
+    return value.path;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => serializeValue(item));
+  }
+  return value;
+}
+
+function createScopeProxy(scope: string): Record<string, FieldReference> {
+  return new Proxy(
+    {},
+    {
+      get(_target, prop) {
+        if (typeof prop !== "string") return undefined;
+        return field(`${scope}.${prop}`);
+      },
+    }
+  ) as Record<string, FieldReference>;
+}
+
+type PolicyContext = {
+  auth: Record<string, FieldReference>;
+  old: Record<string, FieldReference>;
+  new: Record<string, FieldReference>;
+};
+
+export const r = {
+  allow(): Condition {
+    return {};
+  },
+  where(builder: (ctx: PolicyContext) => Condition): Condition {
+    return builder({
+      auth: createScopeProxy("auth"),
+      old: createScopeProxy("old"),
+      new: createScopeProxy("new"),
+    });
+  },
+};
+
+export function eq(left: unknown, right: unknown): Condition {
+  if (isFieldReference(left)) {
+    return { field: left.path, op: "eq", value: serializeValue(right) };
+  }
+  if (isFieldReference(right)) {
+    return { field: right.path, op: "eq", value: serializeValue(left) };
+  }
+  throw new Error("eq requires at least one field reference");
+}
+
+export function inList(left: unknown, values: unknown[]): Condition {
+  if (!isFieldReference(left)) {
+    throw new Error("inList requires a field reference as the first argument");
+  }
+  return { field: left.path, op: "in", value: values.map((value) => serializeValue(value)) };
+}
+
+export function and(...conditions: Condition[]): Condition {
+  return { and: conditions };
+}
+
+export function or(...conditions: Condition[]): Condition {
+  return { or: conditions };
+}
+
+export function not(condition: Condition): Condition {
+  return { not: condition };
+}
+
+export function definePolicy(policy: OperationPolicy): OperationPolicy {
+  return policy;
+}
+
+export function defineAccess(access: AccessDefinition): AccessDefinition {
+  return access;
+}
+
+export function defineGlobal(input: Omit<GlobalDefinition, "type">): GlobalDefinition {
+  return {
+    ...input,
+    type: "global",
+  };
+}
+
+export function defineUser(input: Omit<UserDefinition, "type">): UserDefinition {
+  return {
+    ...input,
+    type: "user",
+  };
+}
+
+export function defineOrg(input: Omit<OrganizationDefinition, "type">): OrganizationDefinition {
+  return {
+    ...input,
+    type: "organization",
   };
 }

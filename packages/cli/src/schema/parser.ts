@@ -1,69 +1,83 @@
 import { existsSync, readdirSync } from "node:fs";
 import { resolve, basename } from "node:path";
 import { createJiti } from "jiti";
-import type { SchemaDefinition } from "@atomicbase/definitions";
+import type { DefinitionDefinition } from "@atomicbase/definitions";
 
-// Create jiti instance for loading TypeScript schema files
 const jiti = createJiti(import.meta.url);
 
-/**
- * Load a schema from a .schema.ts file.
- */
-export async function loadSchema(filePath: string): Promise<SchemaDefinition> {
+export async function loadSchema(filePath: string): Promise<DefinitionDefinition> {
   const absolutePath = resolve(process.cwd(), filePath);
 
   if (!existsSync(absolutePath)) {
-    throw new Error(`Schema file not found: ${filePath}`);
+    throw new Error(`Definition file not found: ${filePath}`);
   }
 
   try {
     const module = await jiti.import(absolutePath);
-    const schema = (module as { default?: SchemaDefinition }).default ?? module as SchemaDefinition;
+    const definition = (module as { default?: DefinitionDefinition }).default ?? module as DefinitionDefinition;
 
-    if (schema === undefined) {
+    if (definition === undefined) {
       const fileName = basename(filePath);
       throw new Error(
         `No default export in ${fileName}\n\n` +
-        `  Your schema file must export a default schema:\n\n` +
-        `    export default defineSchema("my-app", {\n` +
-        `      // tables...\n` +
+        `  Your file must export a default definition:\n\n` +
+        `    export default defineGlobal({\n` +
+        `      schema: defineSchema({ /* tables */ }),\n` +
+        `      access: defineAccess({ /* policies */ }),\n` +
         `    });\n`
       );
     }
 
-    if (typeof schema.name !== "string" || !Array.isArray(schema.tables)) {
-      const fileName = basename(filePath);
-      throw new Error(
-        `Invalid default export in ${fileName}\n\n` +
-        `  Expected: export default defineSchema(...)\n` +
-        `  Got: ${typeof schema === "object" ? JSON.stringify(Object.keys(schema)) : typeof schema}\n`
-      );
+    if (typeof definition !== "object" || definition === null) {
+      throw new Error(`Invalid default export in ${basename(filePath)}\n\n  Expected a definition object.\n`);
     }
 
     const fileName = basename(filePath);
+    const inferredName = deriveDefinitionName(fileName);
 
-    // Validate schema name
-    if (schema.name.trim() === "") {
+    if (typeof definition.type !== "string" || !["global", "user", "organization"].includes(definition.type)) {
       throw new Error(
-        `Schema in ${fileName} has no name\n\n` +
-        `  The first argument to defineSchema must be a non-empty string:\n\n` +
-        `    export default defineSchema("my-app", { ... });\n`
+        `Invalid definition type in ${fileName}\n\n` +
+        `  Expected defineGlobal(...), defineUser(...), or defineOrg(...).\n`
       );
     }
 
-    // Validate at least one table
-    if (schema.tables.length === 0) {
+    if (!definition.schema || !Array.isArray(definition.schema.tables)) {
       throw new Error(
-        `Schema "${schema.name}" in ${fileName} has no tables\n\n` +
-        `  A schema must have at least one table:\n\n` +
-        `    export default defineSchema("${schema.name}", {\n` +
-        `      users: defineTable({ ... }),\n` +
-        `    });\n`
+        `Invalid schema in ${fileName}\n\n` +
+        `  Expected: schema: defineSchema({ ... })\n`
       );
     }
 
-    // Validate each table has at least one column
-    for (const table of schema.tables) {
+    if (typeof definition.access !== "object" || definition.access === null) {
+      throw new Error(
+        `Invalid access block in ${fileName}\n\n` +
+        `  Expected: access: defineAccess({ ... })\n`
+      );
+    }
+
+    if (definition.name !== undefined && definition.name.trim() === "") {
+      throw new Error(
+        `Definition in ${fileName} has an empty name\n\n` +
+        `  Omit the name to infer it from the filename, or provide a non-empty string.\n`
+      );
+    }
+
+    if (definition.type === "organization" && definition.roles && definition.roles.length === 0) {
+      throw new Error(
+        `Organization definition in ${fileName} has an empty roles array\n\n` +
+        `  Remove roles or provide at least one role.\n`
+      );
+    }
+
+    if (definition.schema.tables.length === 0) {
+      throw new Error(
+        `Definition "${definition.name ?? inferredName}" in ${fileName} has no tables\n\n` +
+        `  A definition schema must have at least one table.\n`
+      );
+    }
+
+    for (const table of definition.schema.tables) {
       if (!table.columns || Object.keys(table.columns).length === 0) {
         throw new Error(
           `Table "${table.name}" in ${fileName} has no columns\n\n` +
@@ -75,13 +89,18 @@ export async function loadSchema(filePath: string): Promise<SchemaDefinition> {
       }
     }
 
-    return schema as SchemaDefinition;
+    return {
+      ...definition,
+      name: definition.name ?? inferredName,
+    };
   } catch (err) {
-    // Re-throw our own validation errors
     if (err instanceof Error && (
       err.message.includes("No default export") ||
-      err.message.includes("Invalid default export") ||
-      err.message.includes("has no name") ||
+      err.message.includes("Invalid definition type") ||
+      err.message.includes("Invalid schema") ||
+      err.message.includes("Invalid access block") ||
+      err.message.includes("has an empty name") ||
+      err.message.includes("has an empty roles array") ||
       err.message.includes("has no tables") ||
       err.message.includes("has no columns")
     )) {
@@ -90,7 +109,6 @@ export async function loadSchema(filePath: string): Promise<SchemaDefinition> {
 
     const fileName = basename(filePath);
 
-    // Handle common schema definition errors
     if (err instanceof Error) {
       if (err.message.includes("_build is not a function")) {
         throw new Error(
@@ -104,10 +122,8 @@ export async function loadSchema(filePath: string): Promise<SchemaDefinition> {
 
       if (err.message.includes("is not a function")) {
         throw new Error(
-          `Invalid column definition in ${fileName}\n\n` +
-          `  Columns must be defined using c.integer(), c.text(), etc:\n\n` +
-          `    id: c.integer().primaryKey(),\n` +
-          `    name: c.text().notNull(),\n`
+          `Invalid definition expression in ${fileName}\n\n` +
+          `  Check your defineGlobal/defineUser/defineOrg, defineSchema, and policy helpers.\n`
         );
       }
 
@@ -117,9 +133,12 @@ export async function loadSchema(filePath: string): Promise<SchemaDefinition> {
   }
 }
 
-/**
- * Find all schema files in a directory.
- */
+function deriveDefinitionName(fileName: string): string {
+  return fileName
+    .replace(/\.(global|user|org|definition|schema)\.(t|j)s$/, "")
+    .replace(/^\+/, "");
+}
+
 export function findSchemaFiles(dir: string): string[] {
   const absoluteDir = resolve(process.cwd(), dir);
 
@@ -129,16 +148,24 @@ export function findSchemaFiles(dir: string): string[] {
 
   const files = readdirSync(absoluteDir);
   return files
-    .filter((f) => f.endsWith(".schema.ts") || f.endsWith(".schema.js"))
+    .filter((f) =>
+      f.endsWith(".schema.ts") ||
+      f.endsWith(".schema.js") ||
+      f.endsWith(".global.ts") ||
+      f.endsWith(".global.js") ||
+      f.endsWith(".user.ts") ||
+      f.endsWith(".user.js") ||
+      f.endsWith(".org.ts") ||
+      f.endsWith(".org.js") ||
+      f.endsWith(".definition.ts") ||
+      f.endsWith(".definition.js")
+    )
     .map((f) => resolve(absoluteDir, f));
 }
 
-/**
- * Load all schemas from a directory.
- */
-export async function loadAllSchemas(dir: string): Promise<SchemaDefinition[]> {
+export async function loadAllSchemas(dir: string): Promise<DefinitionDefinition[]> {
   const files = findSchemaFiles(dir);
-  const schemas: SchemaDefinition[] = [];
+  const schemas: DefinitionDefinition[] = [];
 
   for (const file of files) {
     const schema = await loadSchema(file);

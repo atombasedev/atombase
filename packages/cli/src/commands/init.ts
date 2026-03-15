@@ -11,17 +11,25 @@ export default defineConfig({
 });
 `;
 
-const EXAMPLE_SCHEMA = `import { defineSchema, defineTable, c } from "@atomicbase/definitions";
+const EXAMPLE_SCHEMA = `import { defineGlobal, defineSchema, defineAccess, definePolicy, defineTable, c, r } from "@atomicbase/definitions";
 
-export default defineSchema("my-app", {
-  users: defineTable({
-    id: c.integer().primaryKey(),
-    email: c.text().notNull().unique(),
-    name: c.text().notNull(),
-    created_at: c.text().notNull().default("CURRENT_TIMESTAMP"),
+export default defineGlobal({
+  schema: defineSchema({
+    users: defineTable({
+      id: c.integer().primaryKey(),
+      email: c.text().notNull().unique(),
+      name: c.text().notNull(),
+      created_at: c.text().notNull().default("CURRENT_TIMESTAMP"),
+    }),
   }),
-
-  // Add more tables here...
+  access: defineAccess({
+    users: definePolicy({
+      select: r.allow(),
+      insert: r.allow(),
+      update: r.allow(),
+      delete: r.allow(),
+    }),
+  }),
 });
 `;
 
@@ -47,12 +55,12 @@ export const initCommand = new Command("init")
       console.log("Created schemas/");
 
       // Create example schema
-      writeFileSync(resolve(schemasDir, "my-app.schema.ts"), EXAMPLE_SCHEMA);
-      console.log("Created schemas/my-app.schema.ts");
+      writeFileSync(resolve(schemasDir, "my-app.global.ts"), EXAMPLE_SCHEMA);
+      console.log("Created schemas/my-app.global.ts");
     }
 
     console.log("\nDone! Next steps:");
     console.log("  1. Set ATOMICBASE_URL and ATOMICBASE_API_KEY environment variables");
-    console.log("  2. Edit schemas/my-app.schema.ts to define your tables");
-    console.log("  3. Run: atomicbase push");
+    console.log("  2. Edit schemas/my-app.global.ts to define your schema and access rules");
+    console.log("  3. Run: atomicbase definitions push");
   });

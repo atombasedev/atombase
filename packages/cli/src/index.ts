@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { config as loadEnv } from "dotenv";
 import { Command } from "commander";
 import { initCommand } from "./commands/init.js";
-import { templatesCommand } from "./commands/templates.js";
+import { definitionsCommand } from "./commands/definitions.js";
 import { databasesCommand } from "./commands/databases.js";
 
 // Load environment variables from .env file in the user's working directory
@@ -18,7 +18,7 @@ const program = new Command();
 
 program
   .name("atomicbase")
-  .description("CLI for Atomicbase schema management")
+  .description("CLI for Atomicbase definition management")
   .version("0.1.0")
   .option("-k, --insecure", "Skip SSL certificate verification")
   .hook("preAction", (thisCommand) => {
@@ -35,7 +35,7 @@ program
 
 // Register commands
 program.addCommand(initCommand);
-program.addCommand(templatesCommand);
+program.addCommand(definitionsCommand);
 program.addCommand(databasesCommand);
 
 program.parse();

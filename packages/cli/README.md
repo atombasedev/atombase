@@ -1,6 +1,6 @@
 # @atomicbase/cli
 
-Command-line interface for Atomicbase schema management.
+Command-line interface for Atomicbase definition management.
 
 ## Installation
 
@@ -43,37 +43,28 @@ npx atomicbase init
 
 Creates `atomicbase.config.ts` and `schemas/` directory.
 
-### Templates
+### Definitions
 
-Manage schema templates on the server.
+Manage definitions on the server.
 
 ```bash
-# List all templates
-npx atomicbase templates list
+# List all definitions
+npx atomicbase definitions list
 
-# Get template details
-npx atomicbase templates get <name>
+# Get definition details
+npx atomicbase definitions get <name>
 
-# Push all local schemas to server
-npx atomicbase templates push
+# Push all local definition files to server
+npx atomicbase definitions push
 
-# Push a specific template by name
-npx atomicbase templates push <name>
+# Push a specific definition by name
+npx atomicbase definitions push <name>
 
-# Pull all schemas from server to local files
-npx atomicbase templates pull [-y]
-
-# Pull a specific template
-npx atomicbase templates pull <name> [-y]
-
-# Preview changes without applying
-npx atomicbase templates diff [file]
-
-# Delete a template (only if no databases use it)
-npx atomicbase templates delete <name> [-f]
+# Preview schema changes without applying
+npx atomicbase definitions diff [file]
 
 # View version history
-npx atomicbase templates history <name>
+npx atomicbase definitions history <name>
 
 ```
 
@@ -86,65 +77,57 @@ Manage databases.
 npx atomicbase databases list
 
 # Get database details
-npx atomicbase databases get <name>
+npx atomicbase databases get <id>
 
 # Create a new database
-npx atomicbase databases create <name> --template <template>
+npx atomicbase databases create <id> --definition <definition>
 
 # Delete a database
-npx atomicbase databases delete <name> [-f]
-
-# Sync database to latest template version
-npx atomicbase databases sync <name>
+npx atomicbase databases delete <id> [-f]
 ```
 
-### Jobs
+## Definition Files
 
-Track migration jobs.
-
-```bash
-# List all jobs (optionally filter by status)
-npx atomicbase jobs [--status <status>]
-
-# Get job details
-npx atomicbase jobs <job_id>
-
-# Retry failed databases in a job
-npx atomicbase jobs retry <job_id>
-```
-
-## Schema Files
-
-Define schemas in the `schemas/` directory:
+Define definitions in the `schemas/` directory:
 
 ```typescript
-// schemas/my-app.schema.ts
-import { defineSchema, defineTable, c } from "@atomicbase/definitions";
+// schemas/my-app.global.ts
+import { defineGlobal, defineSchema, defineAccess, definePolicy, defineTable, c, r } from "@atomicbase/definitions";
 
-export default defineSchema("my-app", {
-  users: defineTable({
-    id: c.integer().primaryKey(),
-    name: c.text().notNull(),
-    email: c.text().notNull().unique(),
-    created_at: c.text().notNull().default("CURRENT_TIMESTAMP"),
+export default defineGlobal({
+  schema: defineSchema({
+    users: defineTable({
+      id: c.integer().primaryKey(),
+      name: c.text().notNull(),
+      email: c.text().notNull().unique(),
+      created_at: c.text().notNull().default("CURRENT_TIMESTAMP"),
+    }),
+  }),
+  access: defineAccess({
+    users: definePolicy({
+      select: r.allow(),
+      insert: r.allow(),
+      update: r.allow(),
+      delete: r.allow(),
+    }),
   }),
 });
 ```
 
 ## Workflow
 
-1. Define schema locally in `schemas/`
-2. Preview changes: `npx atomicbase templates diff`
-3. Push to server: `npx atomicbase templates push`
-4. Create databases: `npx atomicbase databases create acme --template my-app`
-5. Requests to older databases migrate lazily on first access
+1. Define a definition locally in `schemas/`
+2. Preview changes: `npx atomicbase definitions diff`
+3. Push to server: `npx atomicbase definitions push`
+4. Create databases: `npx atomicbase databases create acme --definition my-app`
+5. Tenant databases migrate lazily on first access
 
 ## Options
 
 ```bash
 # Skip SSL certificate verification (development only)
-npx atomicbase -k templates list
-npx atomicbase --insecure templates list
+npx atomicbase -k definitions list
+npx atomicbase --insecure definitions list
 ```
 
 ## License
