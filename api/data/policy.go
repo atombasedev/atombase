@@ -7,6 +7,9 @@ import (
 )
 
 func (dao *TenantConnection) compilePolicy(ctx context.Context, table, operation string, values map[string]any) (definitions.CompiledPredicate, error) {
+	if dao == nil || dao.primaryStore == nil || dao.DefinitionID == 0 {
+		return definitions.CompiledPredicate{GoAllowed: true}, nil
+	}
 	policy, err := dao.primaryStore.LoadAccessPolicy(ctx, dao.DefinitionID, dao.DatabaseVersion, table, operation)
 	if err != nil {
 		return definitions.CompiledPredicate{}, err

@@ -209,7 +209,7 @@ func TestBuildCustomJoinSelect(t *testing.T) {
 			},
 		}
 
-		query, groupBy, agg, err := schema.BuildCustomJoinSelect(cjq)
+		query, groupBy, agg, _, err := schema.BuildCustomJoinSelect(cjq, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -247,7 +247,7 @@ func TestBuildCustomJoinSelect(t *testing.T) {
 			},
 		}
 
-		query, groupBy, agg, err := schema.BuildCustomJoinSelect(cjq)
+		query, groupBy, agg, _, err := schema.BuildCustomJoinSelect(cjq, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -266,21 +266,21 @@ func TestBuildCustomJoinSelect(t *testing.T) {
 	})
 
 	t.Run("missing base table", func(t *testing.T) {
-		_, _, _, err := schema.BuildCustomJoinSelect(&CustomJoinQuery{
+		_, _, _, _, err := schema.BuildCustomJoinSelect(&CustomJoinQuery{
 			BaseTable:   "missing",
 			BaseColumns: []column{{name: "id"}},
-		})
+		}, nil)
 		if err == nil {
 			t.Fatal("expected error")
 		}
 	})
 
 	t.Run("no selected columns", func(t *testing.T) {
-		_, _, _, err := schema.BuildCustomJoinSelect(&CustomJoinQuery{
+		_, _, _, _, err := schema.BuildCustomJoinSelect(&CustomJoinQuery{
 			BaseTable:     "users",
 			BaseColumns:   []column{},
 			JoinedColumns: map[string][]column{},
-		})
+		}, nil)
 		if err == nil || !strings.Contains(err.Error(), "no columns selected") {
 			t.Fatalf("expected no columns selected error, got %v", err)
 		}
@@ -304,7 +304,7 @@ func TestBuildSelect_QueryDepthLimitAndRelationshipErrors(t *testing.T) {
 			},
 		}
 
-		_, _, err := schema.buildSelect(rel)
+		_, _, _, err := schema.buildSelect(rel, nil)
 		if err == nil || !strings.Contains(err.Error(), "query nesting exceeds maximum depth") {
 			t.Fatalf("expected depth error, got %v", err)
 		}
@@ -320,7 +320,7 @@ func TestBuildSelect_QueryDepthLimitAndRelationshipErrors(t *testing.T) {
 			},
 		}
 
-		_, _, err := schema.buildSelect(rel)
+		_, _, _, err := schema.buildSelect(rel, nil)
 		if err == nil || !strings.Contains(err.Error(), "no relationship exists between tables") {
 			t.Fatalf("expected relationship error, got %v", err)
 		}

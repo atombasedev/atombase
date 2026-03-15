@@ -28,6 +28,7 @@ func (dao *TenantConnection) selectJSON(ctx context.Context, exec Executor, rela
 	}
 
 	var sqlQuery, groupBy, agg string
+	var policyArgs []any
 
 	// Check if this is a custom join query
 	if len(query.Join) > 0 {
@@ -36,8 +37,12 @@ func (dao *TenantConnection) selectJSON(ctx context.Context, exec Executor, rela
 		if err != nil {
 			return SelectResult{}, err
 		}
+		policies, err := dao.compileCustomJoinPolicies(ctx, cjq)
+		if err != nil {
+			return SelectResult{}, err
+		}
 
-		sqlQuery, groupBy, agg, err = dao.Schema.BuildCustomJoinSelect(cjq)
+		sqlQuery, groupBy, agg, policyArgs, err = dao.Schema.BuildCustomJoinSelect(cjq, policies)
 		if err != nil {
 			return SelectResult{}, err
 		}
@@ -47,9 +52,13 @@ func (dao *TenantConnection) selectJSON(ctx context.Context, exec Executor, rela
 		if err != nil {
 			return SelectResult{}, err
 		}
+		policies, err := dao.compileSelectPolicies(ctx, rel)
+		if err != nil {
+			return SelectResult{}, err
+		}
 
 		// Build SELECT query
-		sqlQuery, agg, err = dao.Schema.buildSelect(rel)
+		sqlQuery, agg, policyArgs, err = dao.Schema.buildSelect(rel, policies)
 		if err != nil {
 			return SelectResult{}, err
 		}
@@ -60,12 +69,7 @@ func (dao *TenantConnection) selectJSON(ctx context.Context, exec Executor, rela
 	if err != nil {
 		return SelectResult{}, err
 	}
-
-	policy, err := dao.compilePolicy(ctx, relation, "select", nil)
-	if err != nil {
-		return SelectResult{}, err
-	}
-	where, args = appendPolicyWhere(where, args, policy)
+	args = append(args, policyArgs...)
 
 	// Build query in correct SQL order: SELECT...FROM...JOIN + WHERE + GROUP BY
 	baseQuery := sqlQuery + where + groupBy
@@ -75,7 +79,8 @@ func (dao *TenantConnection) selectJSON(ctx context.Context, exec Executor, rela
 	// Get count if requested
 	if includeCount {
 		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM (%s)", baseQuery)
-		row := exec.QueryRowContext(ctx, countQuery, args...)
+		countQuery, countArgs := applyPolicyCTE(countQuery, args, dao, strings.Contains(countQuery, "__ab_membership"))
+		row := exec.QueryRowContext(ctx, countQuery, countArgs...)
 		if err := row.Scan(&result.Count); err != nil {
 			return SelectResult{}, err
 		}
@@ -111,7 +116,9 @@ func (dao *TenantConnection) selectJSON(ctx context.Context, exec Executor, rela
 		baseQuery += fmt.Sprintf("OFFSET %d ", offset)
 	}
 
-	row := exec.QueryRowContext(ctx, fmt.Sprintf("SELECT json_group_array(%s) AS data FROM (%s)", agg, baseQuery), args...)
+	finalQuery := fmt.Sprintf("SELECT json_group_array(%s) AS data FROM (%s)", agg, baseQuery)
+	finalQuery, args = applyPolicyCTE(finalQuery, args, dao, strings.Contains(finalQuery, "__ab_membership"))
+	row := exec.QueryRowContext(ctx, finalQuery, args...)
 	if err := row.Scan(&result.Data); err != nil {
 		return SelectResult{}, err
 	}
@@ -142,6 +149,10 @@ func (dao *TenantConnection) insertJSON(ctx context.Context, exec Executor, rela
 	if len(req.Data[0]) == 0 {
 		return nil, errors.New("insert rows must have at least one column")
 	}
+	policy, err := dao.compilePolicy(ctx, relation, "insert", req.Data[0])
+	if err != nil {
+		return nil, err
+	}
 
 	// Build column list from first row - collect into slice for consistent ordering
 	columns := make([]string, 0, len(req.Data[0]))
@@ -152,31 +163,7 @@ func (dao *TenantConnection) insertJSON(ctx context.Context, exec Executor, rela
 		columns = append(columns, col)
 	}
 
-	query := fmt.Sprintf("INSERT INTO [%s] ( ", relation)
-	args := make([]any, 0, len(req.Data)*len(columns))
-	valuesTemplate := "( "
-
-	for _, col := range columns {
-		query += fmt.Sprintf("[%s], ", col)
-		valuesTemplate += "?, "
-	}
-
-	query = query[:len(query)-2] + " ) VALUES "
-	valuesTemplate = valuesTemplate[:len(valuesTemplate)-2] + " )"
-
-	// Build values for each row using consistent column order
-	for i, row := range req.Data {
-		if i > 0 {
-			query += ", "
-		}
-		query += valuesTemplate
-
-		for _, col := range columns {
-			args = append(args, row[col])
-		}
-	}
-
-	query += " "
+	query, args := buildInsertSelectSQL("INSERT", relation, columns, req.Data, policy)
 
 	if len(req.Returning) > 0 {
 		retQuery, err := table.BuildReturningFromJSON(req.Returning)
@@ -184,9 +171,11 @@ func (dao *TenantConnection) insertJSON(ctx context.Context, exec Executor, rela
 			return nil, err
 		}
 		query += retQuery
+		query, args = applyPolicyCTE(query, args, dao, policy.NeedsMembershipCTE)
 		return dao.queryJSONWithExec(ctx, exec, query, args...)
 	}
 
+	query, args = applyPolicyCTE(query, args, dao, policy.NeedsMembershipCTE)
 	result, err := ExecContextWithRetry(ctx, exec, query, args...)
 	if err != nil {
 		return nil, err
@@ -222,6 +211,10 @@ func (dao *TenantConnection) insertIgnoreJSON(ctx context.Context, exec Executor
 	if len(req.Data[0]) == 0 {
 		return nil, errors.New("insert rows must have at least one column")
 	}
+	policy, err := dao.compilePolicy(ctx, relation, "insert", req.Data[0])
+	if err != nil {
+		return nil, err
+	}
 
 	// Build column list from first row - collect into slice for consistent ordering
 	columns := make([]string, 0, len(req.Data[0]))
@@ -232,31 +225,7 @@ func (dao *TenantConnection) insertIgnoreJSON(ctx context.Context, exec Executor
 		columns = append(columns, col)
 	}
 
-	query := fmt.Sprintf("INSERT OR IGNORE INTO [%s] ( ", relation)
-	args := make([]any, 0, len(req.Data)*len(columns))
-	valuesTemplate := "( "
-
-	for _, col := range columns {
-		query += fmt.Sprintf("[%s], ", col)
-		valuesTemplate += "?, "
-	}
-
-	query = query[:len(query)-2] + " ) VALUES "
-	valuesTemplate = valuesTemplate[:len(valuesTemplate)-2] + " )"
-
-	// Build values for each row using consistent column order
-	for i, row := range req.Data {
-		if i > 0 {
-			query += ", "
-		}
-		query += valuesTemplate
-
-		for _, col := range columns {
-			args = append(args, row[col])
-		}
-	}
-
-	query += " "
+	query, args := buildInsertSelectSQL("INSERT OR IGNORE", relation, columns, req.Data, policy)
 
 	if len(req.Returning) > 0 {
 		retQuery, err := table.BuildReturningFromJSON(req.Returning)
@@ -264,9 +233,11 @@ func (dao *TenantConnection) insertIgnoreJSON(ctx context.Context, exec Executor
 			return nil, err
 		}
 		query += retQuery
+		query, args = applyPolicyCTE(query, args, dao, policy.NeedsMembershipCTE)
 		return dao.queryJSONWithExec(ctx, exec, query, args...)
 	}
 
+	query, args = applyPolicyCTE(query, args, dao, policy.NeedsMembershipCTE)
 	result, err := ExecContextWithRetry(ctx, exec, query, args...)
 	if err != nil {
 		return nil, err
@@ -302,6 +273,10 @@ func (dao *TenantConnection) upsertJSON(ctx context.Context, exec Executor, rela
 	if len(req.Data[0]) == 0 {
 		return nil, errors.New("upsert rows must have at least one column")
 	}
+	policy, err := dao.compilePolicy(ctx, relation, "insert", req.Data[0])
+	if err != nil {
+		return nil, err
+	}
 
 	// Collect columns into slice for consistent ordering
 	columns := make([]string, 0, len(req.Data[0]))
@@ -312,29 +287,7 @@ func (dao *TenantConnection) upsertJSON(ctx context.Context, exec Executor, rela
 		columns = append(columns, col)
 	}
 
-	query := fmt.Sprintf("INSERT INTO [%s] ( ", relation)
-	args := make([]any, 0, len(req.Data)*len(columns))
-	valuesTemplate := "( "
-
-	for _, col := range columns {
-		query += fmt.Sprintf("[%s], ", col)
-		valuesTemplate += "?, "
-	}
-
-	valuesTemplate = valuesTemplate[:len(valuesTemplate)-2] + " )"
-	query = query[:len(query)-2] + " ) VALUES "
-
-	// Build values for each row
-	for i, row := range req.Data {
-		if i > 0 {
-			query += ", "
-		}
-		query += valuesTemplate
-
-		for _, col := range columns {
-			args = append(args, row[col])
-		}
-	}
+	query, args := buildInsertSelectSQL("INSERT", relation, columns, req.Data, policy)
 
 	if len(table.Pk) == 0 {
 		query += " ON CONFLICT(rowid) DO UPDATE SET "
@@ -358,9 +311,11 @@ func (dao *TenantConnection) upsertJSON(ctx context.Context, exec Executor, rela
 			return nil, err
 		}
 		query += retQuery
+		query, args = applyPolicyCTE(query, args, dao, policy.NeedsMembershipCTE)
 		return dao.queryJSONWithExec(ctx, exec, query, args...)
 	}
 
+	query, args = applyPolicyCTE(query, args, dao, policy.NeedsMembershipCTE)
 	result, err := ExecContextWithRetry(ctx, exec, query, args...)
 	if err != nil {
 		return nil, err
@@ -427,6 +382,7 @@ func (dao *TenantConnection) updateJSON(ctx context.Context, exec Executor, rela
 	where, whereArgs = appendPolicyWhere(where, whereArgs, policy)
 	query += where
 	args = append(args, whereArgs...)
+	query, args = applyPolicyCTE(query, args, dao, policy.NeedsMembershipCTE)
 
 	result, err := ExecContextWithRetry(ctx, exec, query, args...)
 	if err != nil {
@@ -472,6 +428,7 @@ func (dao *TenantConnection) deleteJSON(ctx context.Context, exec Executor, rela
 	}
 	where, args = appendPolicyWhere(where, args, policy)
 	query += where
+	query, args = applyPolicyCTE(query, args, dao, policy.NeedsMembershipCTE)
 
 	result, err := ExecContextWithRetry(ctx, exec, query, args...)
 	if err != nil {

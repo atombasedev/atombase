@@ -168,9 +168,31 @@ func (api *API) pushDefinition(ctx context.Context, name string, req PushDefinit
 	if err != nil {
 		return nil, err
 	}
+	var currentSchema Schema
+	if err := tools.DecodeSchema(current.Schema, &currentSchema); err != nil {
+		return nil, err
+	}
+
+	changes := diffSchemas(currentSchema, req.Schema)
+	if len(changes) == 0 {
+		return nil, tools.ErrNoChanges
+	}
+
 	accessRows, err := definitions.ParseAndValidateAccess(current.Type, req.Access, schemaTableSet(req.Schema))
 	if err != nil {
 		return nil, tools.InvalidRequestErr(err.Error())
+	}
+	validationResult, err := ValidateMigrationPlan(ctx, req.Schema, nil)
+	if err != nil {
+		return nil, err
+	}
+	if !validationResult.Valid {
+		return nil, tools.InvalidMigrationErr(validationResult.Errors[0].Message)
+	}
+
+	plan, err := GenerateMigrationPlan(currentSchema, req.Schema, changes, req.Merge)
+	if err != nil {
+		return nil, tools.InvalidMigrationErr(err.Error())
 	}
 	schemaJSON, err := encodeSchemaForStorage(req.Schema)
 	if err != nil {
@@ -180,6 +202,20 @@ func (api *API) pushDefinition(ctx context.Context, name string, req PushDefinit
 	checksum := hex.EncodeToString(hash[:])
 	now := time.Now().UTC().Format(time.RFC3339)
 	version := current.CurrentVersion + 1
+
+	existingDBs, err := api.getDatabasesByDefinition(ctx, current.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(existingDBs) > 0 && len(plan.SQL) > 0 {
+		probeToken, err := api.getDatabaseToken(ctx, existingDBs[0].ID)
+		if err != nil {
+			return nil, err
+		}
+		if err := batchExecuteWithTokenFn(ctx, existingDBs[0].ID, probeToken, plan.SQL); err != nil {
+			return nil, tools.InvalidMigrationErr(err.Error())
+		}
+	}
 
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -191,6 +227,16 @@ func (api *API) pushDefinition(ctx context.Context, name string, req PushDefinit
 		INSERT INTO atombase_definitions_history (definition_id, version, schema_json, checksum, created_at)
 		VALUES (?, ?, ?, ?, ?)
 	`, current.ID, version, string(schemaJSON), checksum, now); err != nil {
+		return nil, err
+	}
+	sqlJSON, err := json.Marshal(plan.SQL)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO atombase_migrations (definition_id, from_version, to_version, sql, created_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, current.ID, current.CurrentVersion, version, string(sqlJSON), now); err != nil {
 		return nil, err
 	}
 
@@ -223,6 +269,16 @@ func (api *API) pushDefinition(ctx context.Context, name string, req PushDefinit
 		WHERE id = ?
 	`, version, now, current.ID); err != nil {
 		return nil, err
+	}
+
+	if len(existingDBs) > 0 {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE atombase_databases
+			SET definition_version = ?, updated_at = ?
+			WHERE id = ?
+		`, version, now, existingDBs[0].ID); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {

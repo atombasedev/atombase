@@ -36,6 +36,7 @@ type CreateDefinitionRequest struct {
 type PushDefinitionRequest struct {
 	Schema Schema                `json:"schema"`
 	Access definitions.AccessMap `json:"access"`
+	Merge  []Merge               `json:"merge,omitempty"`
 }
 
 // SchemaDiff represents a single schema modification.
@@ -68,7 +69,7 @@ type MigrationPlan struct {
 // Migration tracks both the SQL and execution state.
 type Migration struct {
 	ID           int64      `json:"id"`
-	TemplateID   int32      `json:"templateId"`
+	DefinitionID int32      `json:"definitionId"`
 	FromVersion  int        `json:"fromVersion"`
 	ToVersion    int        `json:"toVersion"`
 	SQL          []string   `json:"sql"`    // Migration SQL statements

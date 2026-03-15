@@ -108,7 +108,8 @@ type OperationPolicy struct {
 }
 
 type CompiledPredicate struct {
-	SQL       string
-	Args      []any
-	GoAllowed bool
+	SQL                string
+	Args               []any
+	GoAllowed          bool
+	NeedsMembershipCTE bool
 }

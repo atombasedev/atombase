@@ -76,6 +76,61 @@ func (api *API) getDatabase(ctx context.Context, id string) (*DatabaseRecord, er
 	return &item, nil
 }
 
+func (api *API) getDatabasesByDefinition(ctx context.Context, definitionID int32) ([]DatabaseRecord, error) {
+	conn, err := api.dbConn()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := conn.QueryContext(ctx, `
+		SELECT d.id, d.definition_id, def.name, def.definition_type, d.definition_version, d.created_at, d.updated_at,
+		       COALESCE(o.owner_id, ''), COALESCE(o.id, ''), COALESCE(o.name, '')
+		FROM atombase_databases d
+		JOIN atombase_definitions def ON def.id = d.definition_id
+		LEFT JOIN atombase_organizations o ON o.database_id = d.id
+		WHERE d.definition_id = ?
+		ORDER BY d.created_at ASC, d.id ASC
+	`, definitionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []DatabaseRecord
+	for rows.Next() {
+		var item DatabaseRecord
+		var createdAt, updatedAt string
+		if err := rows.Scan(&item.ID, &item.DefinitionID, &item.DefinitionName, &item.DefinitionType, &item.DefinitionVersion, &createdAt, &updatedAt, &item.OwnerID, &item.OrganizationID, &item.OrganizationName); err != nil {
+			return nil, err
+		}
+		item.CreatedAt = mustParseTime(createdAt)
+		item.UpdatedAt = mustParseTime(updatedAt)
+		items = append(items, item)
+	}
+	if items == nil {
+		items = []DatabaseRecord{}
+	}
+	return items, rows.Err()
+}
+
+func (api *API) getDatabaseToken(ctx context.Context, id string) (string, error) {
+	conn, err := api.dbConn()
+	if err != nil {
+		return "", err
+	}
+	var encrypted []byte
+	if err := conn.QueryRowContext(ctx, `
+		SELECT auth_token_encrypted
+		FROM atombase_databases
+		WHERE id = ?
+	`, id).Scan(&encrypted); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrDatabaseNotFound
+		}
+		return "", err
+	}
+	return decodeStoredDatabaseToken(encrypted)
+}
+
 func (api *API) createDatabase(ctx context.Context, req CreateDatabaseRequest) (*DatabaseRecord, error) {
 	conn, err := api.dbConn()
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/atombasedev/atombase/primarystore"
+	"github.com/atombasedev/atombase/tools"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -35,6 +36,14 @@ CREATE TABLE atombase_access_policies (
 	operation TEXT NOT NULL,
 	conditions_json TEXT,
 	PRIMARY KEY(definition_id, version, table_name, operation)
+);
+CREATE TABLE atombase_migrations (
+	id INTEGER PRIMARY KEY,
+	definition_id INTEGER NOT NULL,
+	from_version INTEGER NOT NULL,
+	to_version INTEGER NOT NULL,
+	sql TEXT NOT NULL,
+	created_at TEXT NOT NULL
 );
 CREATE TABLE atombase_databases (
 	id TEXT PRIMARY KEY NOT NULL,
@@ -138,6 +147,51 @@ func TestDefinitionCRUDAndHistory(t *testing.T) {
 	if version.Version != 2 {
 		t.Fatalf("expected version 2, got %d", version.Version)
 	}
+
+	var migrationCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM atombase_migrations WHERE definition_id = ? AND from_version = 1 AND to_version = 2`, created.ID).Scan(&migrationCount); err != nil {
+		t.Fatalf("failed to query migration row: %v", err)
+	}
+	if migrationCount != 1 {
+		t.Fatalf("expected 1 migration row, got %d", migrationCount)
+	}
+}
+
+func TestPushDefinition_RejectsNoChangesAndInvalidFKs(t *testing.T) {
+	api, db := setupPlatformAPI(t)
+	defer db.Close()
+
+	schema := Schema{Tables: []Table{{Name: "posts", Pk: []string{"id"}, Columns: map[string]Col{
+		"id": {Name: "id", Type: "INTEGER"},
+	}}}}
+
+	_, err := api.createDefinition(context.Background(), CreateDefinitionRequest{
+		Name:   "posts",
+		Type:   "global",
+		Schema: schema,
+		Access: map[string]OperationPolicy{"posts": {Select: &Condition{Field: "auth.status", Op: "eq", Value: "anonymous"}}},
+	})
+	if err != nil {
+		t.Fatalf("createDefinition failed: %v", err)
+	}
+
+	if _, err := api.pushDefinition(context.Background(), "posts", PushDefinitionRequest{
+		Schema: schema,
+		Access: map[string]OperationPolicy{"posts": {Select: &Condition{Field: "auth.status", Op: "eq", Value: "anonymous"}}},
+	}); err != tools.ErrNoChanges {
+		t.Fatalf("expected ErrNoChanges, got %v", err)
+	}
+
+	invalidSchema := Schema{Tables: []Table{{Name: "posts", Pk: []string{"id"}, Columns: map[string]Col{
+		"id":      {Name: "id", Type: "INTEGER"},
+		"user_id": {Name: "user_id", Type: "INTEGER", References: "users.id"},
+	}}}}
+	if _, err := api.pushDefinition(context.Background(), "posts", PushDefinitionRequest{
+		Schema: invalidSchema,
+		Access: map[string]OperationPolicy{"posts": {Select: &Condition{Field: "auth.status", Op: "eq", Value: "anonymous"}}},
+	}); err == nil {
+		t.Fatal("expected invalid migration error for missing FK table")
+	}
 }
 
 func TestCreateDatabase_AttachesUserAndOrgMetadata(t *testing.T) {
@@ -207,5 +261,90 @@ func TestCreateDatabase_AttachesUserAndOrgMetadata(t *testing.T) {
 	}
 	if orgDB.OrganizationID != "org-1" {
 		t.Fatalf("expected org id org-1, got %s", orgDB.OrganizationID)
+	}
+}
+
+func TestPushDefinition_UsesMergeAndProbesExistingDatabase(t *testing.T) {
+	api, db := setupPlatformAPI(t)
+	defer db.Close()
+
+	initial := Schema{Tables: []Table{{
+		Name: "posts",
+		Pk:   []string{"id"},
+		Columns: map[string]Col{
+			"id":    {Name: "id", Type: "INTEGER"},
+			"title": {Name: "title", Type: "TEXT"},
+		},
+	}}}
+
+	created, err := api.createDefinition(context.Background(), CreateDefinitionRequest{
+		Name:   "posts",
+		Type:   "organization",
+		Roles:  []string{"owner", "member"},
+		Schema: initial,
+		Access: map[string]OperationPolicy{
+			"posts": {Select: &Condition{Field: "auth.status", Op: "eq", Value: "member"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("createDefinition failed: %v", err)
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO atombase_databases (id, definition_id, definition_version, auth_token_encrypted, created_at, updated_at)
+		VALUES ('org-db', ?, 1, ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')
+	`, created.ID, []byte("probe-token"))
+	if err != nil {
+		t.Fatalf("failed to insert database row: %v", err)
+	}
+
+	oldBatch := batchExecuteWithTokenFn
+	defer func() {
+		batchExecuteWithTokenFn = oldBatch
+	}()
+
+	var probedDB string
+	var probeSQL []string
+	batchExecuteWithTokenFn = func(ctx context.Context, dbName, token string, statements []string) error {
+		probedDB = dbName
+		probeSQL = append([]string(nil), statements...)
+		return nil
+	}
+
+	next := Schema{Tables: []Table{{
+		Name: "posts",
+		Pk:   []string{"id"},
+		Columns: map[string]Col{
+			"id":       {Name: "id", Type: "INTEGER"},
+			"headline": {Name: "headline", Type: "TEXT"},
+		},
+	}}}
+
+	version, err := api.pushDefinition(context.Background(), "posts", PushDefinitionRequest{
+		Schema: next,
+		Access: map[string]OperationPolicy{
+			"posts": {Select: &Condition{Field: "auth.status", Op: "eq", Value: "member"}},
+		},
+		Merge: []Merge{{Old: 0, New: 1}},
+	})
+	if err != nil {
+		t.Fatalf("pushDefinition failed: %v", err)
+	}
+	if version.Version != 2 {
+		t.Fatalf("expected version 2, got %d", version.Version)
+	}
+	if probedDB != "org-db" {
+		t.Fatalf("expected probe against org-db, got %q", probedDB)
+	}
+	if len(probeSQL) != 1 || probeSQL[0] != "ALTER TABLE [posts] RENAME COLUMN [title] TO [headline]" {
+		t.Fatalf("unexpected probe sql: %#v", probeSQL)
+	}
+
+	var databaseVersion int
+	if err := db.QueryRow(`SELECT definition_version FROM atombase_databases WHERE id = 'org-db'`).Scan(&databaseVersion); err != nil {
+		t.Fatalf("failed to query database version: %v", err)
+	}
+	if databaseVersion != 2 {
+		t.Fatalf("expected probed database version 2, got %d", databaseVersion)
 	}
 }

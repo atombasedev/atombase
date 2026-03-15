@@ -93,15 +93,16 @@ func buildJSONAggregation(pairs []string) string {
 }
 
 // buildSelect constructs a SELECT query with JSON aggregation for the root relation.
-func (schema SchemaCache) buildSelect(rel Relation) (string, string, error) {
+func (schema SchemaCache) buildSelect(rel Relation, policies selectPolicySet) (string, string, []any, error) {
 	// Check query depth limit
 	if depth := relationDepth(&rel); depth > config.Cfg.MaxQueryDepth {
-		return "", "", fmt.Errorf("%w: depth %d exceeds limit %d", tools.ErrQueryTooDeep, depth, config.Cfg.MaxQueryDepth)
+		return "", "", nil, fmt.Errorf("%w: depth %d exceeds limit %d", tools.ErrQueryTooDeep, depth, config.Cfg.MaxQueryDepth)
 	}
 
 	var aggPairs []string
 	sel := ""
 	joins := ""
+	var policyArgs []any
 
 	if rel.columns == nil && rel.joins == nil {
 		rel.columns = []column{{"*", ""}}
@@ -109,7 +110,7 @@ func (schema SchemaCache) buildSelect(rel Relation) (string, string, error) {
 
 	tbl, err := schema.SearchTbls(rel.name)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 
 	for _, col := range rel.columns {
@@ -126,7 +127,7 @@ func (schema SchemaCache) buildSelect(rel Relation) (string, string, error) {
 
 		column, err := tbl.SearchCols(col.name)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 
 		if strings.EqualFold(column, ColTypeBlob) {
@@ -137,7 +138,7 @@ func (schema SchemaCache) buildSelect(rel Relation) (string, string, error) {
 		if col.alias != "" {
 			sanitized, err := sanitizeJSONKey(col.alias)
 			if err != nil {
-				return "", "", err
+				return "", "", nil, err
 			}
 			aggPairs = append(aggPairs, fmt.Sprintf("'%s', [%s]", sanitized, col.name))
 		} else {
@@ -149,20 +150,21 @@ func (schema SchemaCache) buildSelect(rel Relation) (string, string, error) {
 		if joinTbl.alias != "" {
 			sanitized, err := sanitizeJSONKey(joinTbl.alias)
 			if err != nil {
-				return "", "", err
+				return "", "", nil, err
 			}
 			aggPairs = append(aggPairs, fmt.Sprintf("'%s', json([%s])", sanitized, joinTbl.name))
 		} else {
 			aggPairs = append(aggPairs, fmt.Sprintf("'%s', json([%s])", joinTbl.name, joinTbl.name))
 		}
-		query, aggs, err := schema.buildSelCurr(*joinTbl, rel.name)
+		query, aggs, joinArgs, err := schema.buildSelCurr(*joinTbl, rel.name, policies)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
+		policyArgs = append(policyArgs, joinArgs...)
 
 		fk := schema.findForeignKey(joinTbl.name, rel.name)
 		if fk == (CacheFk{}) {
-			return "", "", tools.NoRelationshipErr(rel.name, joinTbl.name)
+			return "", "", nil, tools.NoRelationshipErr(rel.name, joinTbl.name)
 		}
 
 		sel += fmt.Sprintf("json_group_array(%s) FILTER (WHERE [%s].[%s] IS NOT NULL) AS [%s], ", aggs, fk.Table, fk.From, joinTbl.name)
@@ -177,6 +179,10 @@ func (schema SchemaCache) buildSelect(rel Relation) (string, string, error) {
 	}
 
 	query := "SELECT " + sel[:len(sel)-2] + fmt.Sprintf(" FROM [%s] ", rel.name) + joins
+	if predicate, ok := policies[rel.name]; ok && predicate.SQL != "" {
+		query += "WHERE " + predicate.SQL + " "
+		policyArgs = append(policyArgs, predicate.Args...)
+	}
 
 	// When there are joins, we need GROUP BY on root table columns to properly aggregate nested relations
 	if len(rel.joins) > 0 {
@@ -204,16 +210,17 @@ func (schema SchemaCache) buildSelect(rel Relation) (string, string, error) {
 		}
 	}
 
-	return query, buildJSONAggregation(aggPairs), nil
+	return query, buildJSONAggregation(aggPairs), policyArgs, nil
 }
 
 // buildSelCurr constructs a SELECT query for a nested/joined relation.
-func (schema SchemaCache) buildSelCurr(rel Relation, joinedOn string) (string, string, error) {
+func (schema SchemaCache) buildSelCurr(rel Relation, joinedOn string, policies selectPolicySet) (string, string, []any, error) {
 	var sel string
 	var joins string
 	var aggPairs []string
 	includesFk := false
 	var fk CacheFk
+	var policyArgs []any
 
 	if rel.columns == nil && rel.joins == nil {
 		rel.columns = []column{{"*", ""}}
@@ -221,7 +228,7 @@ func (schema SchemaCache) buildSelCurr(rel Relation, joinedOn string) (string, s
 
 	tbl, err := schema.SearchTbls(rel.name)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 
 	if joinedOn != "" {
@@ -246,7 +253,7 @@ func (schema SchemaCache) buildSelCurr(rel Relation, joinedOn string) (string, s
 
 		colType, err := tbl.SearchCols(col.name)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 
 		if strings.EqualFold(colType, ColTypeBlob) {
@@ -257,7 +264,7 @@ func (schema SchemaCache) buildSelCurr(rel Relation, joinedOn string) (string, s
 		if col.alias != "" {
 			sanitized, err := sanitizeJSONKey(col.alias)
 			if err != nil {
-				return "", "", err
+				return "", "", nil, err
 			}
 			aggPairs = append(aggPairs, fmt.Sprintf("'%s', [%s].[%s]", sanitized, rel.name, col.name))
 		} else {
@@ -273,20 +280,21 @@ func (schema SchemaCache) buildSelCurr(rel Relation, joinedOn string) (string, s
 		if joinTbl.alias != "" {
 			sanitized, err := sanitizeJSONKey(joinTbl.alias)
 			if err != nil {
-				return "", "", err
+				return "", "", nil, err
 			}
 			aggPairs = append(aggPairs, fmt.Sprintf("'%s', json([%s])", sanitized, joinTbl.name))
 		} else {
 			aggPairs = append(aggPairs, fmt.Sprintf("'%s', json([%s])", joinTbl.name, joinTbl.name))
 		}
-		query, aggs, err := schema.buildSelCurr(*joinTbl, rel.name)
+		query, aggs, joinArgs, err := schema.buildSelCurr(*joinTbl, rel.name, policies)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
+		policyArgs = append(policyArgs, joinArgs...)
 
 		nestedFk := schema.findForeignKey(joinTbl.name, rel.name)
 		if nestedFk == (CacheFk{}) {
-			return "", "", tools.NoRelationshipErr(rel.name, joinTbl.name)
+			return "", "", nil, tools.NoRelationshipErr(rel.name, joinTbl.name)
 		}
 
 		sel += fmt.Sprintf("json_group_array(%s) FILTER (WHERE [%s].[%s] IS NOT NULL) AS [%s], ", aggs, nestedFk.Table, nestedFk.From, joinTbl.name)
@@ -301,8 +309,12 @@ func (schema SchemaCache) buildSelCurr(rel Relation, joinedOn string) (string, s
 	}
 
 	query := "SELECT " + sel[:len(sel)-2] + fmt.Sprintf(" FROM [%s] ", rel.name) + joins
+	if predicate, ok := policies[rel.name]; ok && predicate.SQL != "" {
+		query += "WHERE " + predicate.SQL + " "
+		policyArgs = append(policyArgs, predicate.Args...)
+	}
 
-	return query, buildJSONAggregation(aggPairs), nil
+	return query, buildJSONAggregation(aggPairs), policyArgs, nil
 }
 
 // CustomJoinQuery represents a SELECT query with custom joins.
@@ -500,15 +512,16 @@ func splitTableColumn(s string) []string {
 // BuildCustomJoinSelect builds a SELECT query with custom joins.
 // Returns: (selectQuery, groupByClause, jsonAggregation, error)
 // The caller must place WHERE between selectQuery and groupByClause.
-func (schema SchemaCache) BuildCustomJoinSelect(cjq *CustomJoinQuery) (string, string, string, error) {
+func (schema SchemaCache) BuildCustomJoinSelect(cjq *CustomJoinQuery, policies selectPolicySet) (string, string, string, []any, error) {
 	var aggPairs []string
 	sel := ""
 	joins := ""
+	var args []any
 
 	// Get base table schema
 	baseTbl, err := schema.SearchTbls(cjq.BaseTable)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", nil, err
 	}
 
 	// Build base table columns
@@ -526,7 +539,7 @@ func (schema SchemaCache) BuildCustomJoinSelect(cjq *CustomJoinQuery) (string, s
 		} else {
 			colType, err := baseTbl.SearchCols(col.name)
 			if err != nil {
-				return "", "", "", err
+				return "", "", "", nil, err
 			}
 			if strings.EqualFold(colType, ColTypeBlob) {
 				continue
@@ -553,7 +566,7 @@ func (schema SchemaCache) BuildCustomJoinSelect(cjq *CustomJoinQuery) (string, s
 	for _, j := range cjq.Joins {
 		joinTbl, err := schema.SearchTbls(j.table)
 		if err != nil {
-			return "", "", "", err
+			return "", "", "", nil, err
 		}
 
 		// Build ON clause
@@ -577,6 +590,10 @@ func (schema SchemaCache) BuildCustomJoinSelect(cjq *CustomJoinQuery) (string, s
 		if j.alias != j.table {
 			joins += fmt.Sprintf("AS [%s] ", j.alias)
 		}
+		if predicate, ok := policies[j.table]; ok && predicate.SQL != "" {
+			onClause = "(" + onClause + ") AND (" + predicate.SQL + ")"
+			args = append(args, predicate.Args...)
+		}
 		joins += fmt.Sprintf("ON %s ", onClause)
 
 		// Build columns for this joined table
@@ -598,7 +615,7 @@ func (schema SchemaCache) BuildCustomJoinSelect(cjq *CustomJoinQuery) (string, s
 				} else {
 					colType, err := joinTbl.SearchCols(col.name)
 					if err != nil {
-						return "", "", "", err
+						return "", "", "", nil, err
 					}
 					if strings.EqualFold(colType, ColTypeBlob) {
 						continue
@@ -627,7 +644,7 @@ func (schema SchemaCache) BuildCustomJoinSelect(cjq *CustomJoinQuery) (string, s
 				} else {
 					colType, err := joinTbl.SearchCols(col.name)
 					if err != nil {
-						return "", "", "", err
+						return "", "", "", nil, err
 					}
 					if strings.EqualFold(colType, ColTypeBlob) {
 						continue
@@ -654,11 +671,15 @@ func (schema SchemaCache) BuildCustomJoinSelect(cjq *CustomJoinQuery) (string, s
 	}
 
 	if sel == "" {
-		return "", "", "", fmt.Errorf("no columns selected")
+		return "", "", "", nil, fmt.Errorf("no columns selected")
 	}
 	sel = sel[:len(sel)-2] // Remove trailing ", "
 
 	query := fmt.Sprintf("SELECT %s FROM [%s] %s", sel, cjq.BaseTable, joins)
+	if predicate, ok := policies[cjq.BaseTable]; ok && predicate.SQL != "" {
+		query += "WHERE " + predicate.SQL + " "
+		args = append(args, predicate.Args...)
+	}
 
 	// Build GROUP BY for nested output (returned separately so caller can place WHERE before it)
 	var groupByClause string
@@ -693,7 +714,7 @@ func (schema SchemaCache) BuildCustomJoinSelect(cjq *CustomJoinQuery) (string, s
 		groupByClause = "GROUP BY " + strings.Join(groupBy, ", ") + " "
 	}
 
-	return query, groupByClause, buildJSONAggregation(aggPairs), nil
+	return query, groupByClause, buildJSONAggregation(aggPairs), args, nil
 }
 
 // opToSQL converts a filter operator to SQL operator.

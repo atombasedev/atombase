@@ -10,51 +10,35 @@ import (
 	"strings"
 
 	"github.com/atombasedev/atombase/config"
+	"github.com/atombasedev/atombase/tools"
 )
-
-func isUniqueConstraintError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate")
-}
 
 func generateSchemaSQL(schema Schema) []string {
 	statements := make([]string, 0, len(schema.Tables))
 	for _, table := range schema.Tables {
-		var columns []string
-		for _, col := range table.Columns {
-			def := fmt.Sprintf("[%s]", col.Name)
-			if contains(table.Pk, col.Name) {
-				def += " PRIMARY KEY"
-			}
-			if col.NotNull {
-				def += " NOT NULL"
-			}
-			if col.Default != nil {
-				def += fmt.Sprintf(" DEFAULT %v", col.Default)
-			}
-			if col.References != "" {
-				parts := strings.SplitN(col.References, ".", 2)
-				if len(parts) == 2 {
-					def += fmt.Sprintf(" REFERENCES [%s]([%s])", parts[0], parts[1])
-				}
-			}
-			columns = append(columns, def)
+		statements = append(statements, generateCreateTableSQL(table))
+		for _, idx := range table.Indexes {
+			statements = append(statements, generateCreateIndexSQL(table.Name, idx))
 		}
-		statements = append(statements, fmt.Sprintf("CREATE TABLE IF NOT EXISTS [%s] (%s)", table.Name, strings.Join(columns, ", ")))
+		if len(table.FTSColumns) > 0 {
+			statements = append(statements, generateFTSSQL(table.Name, table.FTSColumns, table.Pk)...)
+		}
 	}
 	return statements
 }
 
-func contains(items []string, target string) bool {
-	for _, item := range items {
-		if item == target {
-			return true
-		}
+func decodeStoredDatabaseToken(storedToken []byte) (string, error) {
+	if len(storedToken) == 0 {
+		return "", nil
 	}
-	return false
+	if !tools.EncryptionEnabled() {
+		return string(storedToken), nil
+	}
+	decrypted, err := tools.Decrypt(storedToken)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt auth token: %w", err)
+	}
+	return string(decrypted), nil
 }
 
 var (
