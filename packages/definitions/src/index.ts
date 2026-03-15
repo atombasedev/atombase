@@ -110,6 +110,22 @@ export interface OperationPolicy {
 
 export type AccessDefinition = Record<string, OperationPolicy>;
 
+export type ManagementPermission =
+  | boolean
+  | string[]
+  | { any: true };
+
+export interface ManagementPolicy {
+  invite?: ManagementPermission;
+  assignRole?: ManagementPermission;
+  removeMember?: ManagementPermission;
+  updateOrg?: boolean;
+  deleteOrg?: boolean;
+  transferOwnership?: boolean;
+}
+
+export type ManagementDefinition = Record<string, ManagementPolicy>;
+
 export interface GlobalDefinition {
   name?: string;
   type: "global";
@@ -129,6 +145,7 @@ export interface OrganizationDefinition {
   type: "organization";
   roles?: string[];
   maxMembers?: number;
+  management?: ManagementDefinition;
   schema: SchemaDefinition;
   access: AccessDefinition;
 }
@@ -489,6 +506,10 @@ type PolicyContext = {
   new: Record<string, FieldReference>;
 };
 
+type ManagementRoleContext = Record<string, { __kind: "role_ref"; role: string }> & {
+  any(): { any: true };
+};
+
 export const r = {
   allow(): Condition {
     return {};
@@ -537,6 +558,61 @@ export function definePolicy(policy: OperationPolicy): OperationPolicy {
 
 export function defineAccess(access: AccessDefinition): AccessDefinition {
   return access;
+}
+
+export function defineManagement(builder: (role: ManagementRoleContext) => ManagementDefinition): ManagementDefinition {
+  const proxy = new Proxy(
+    {},
+    {
+      get(_target, prop) {
+        if (prop === "any") {
+          return () => ({ any: true as const });
+        }
+        if (typeof prop !== "string") return undefined;
+        return { __kind: "role_ref", role: prop };
+      },
+    }
+  ) as ManagementRoleContext;
+
+  return normalizeManagement(builder(proxy));
+}
+
+function normalizeManagement(input: ManagementDefinition): ManagementDefinition {
+  const out: ManagementDefinition = {};
+  for (const [roleName, policy] of Object.entries(input)) {
+    out[roleName] = {
+      invite: normalizeManagementPermission(policy.invite),
+      assignRole: normalizeManagementPermission(policy.assignRole),
+      removeMember: normalizeManagementPermission(policy.removeMember),
+      updateOrg: policy.updateOrg,
+      deleteOrg: policy.deleteOrg,
+      transferOwnership: policy.transferOwnership,
+    };
+  }
+  return out;
+}
+
+function normalizeManagementPermission(permission: ManagementPermission | undefined): ManagementPermission | undefined {
+  if (permission === undefined || typeof permission === "boolean") {
+    return permission;
+  }
+  if (Array.isArray(permission)) {
+    return permission.map((item) => normalizeRoleValue(item));
+  }
+  if (typeof permission === "object" && permission !== null && "any" in permission) {
+    return { any: true };
+  }
+  return permission;
+}
+
+function normalizeRoleValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "object" && value !== null && "__kind" in value && (value as { __kind?: string }).__kind === "role_ref") {
+    return (value as unknown as { role: string }).role;
+  }
+  throw new Error("management role lists must contain role references");
 }
 
 export function defineGlobal(input: Omit<GlobalDefinition, "type">): GlobalDefinition {

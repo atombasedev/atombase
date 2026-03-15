@@ -140,6 +140,79 @@ func (s *Store) LookupOrganizationTenant(ctx context.Context, organizationID str
 	return meta.ID, meta.AuthToken, nil
 }
 
+func (s *Store) LookupOrganizationAuthz(ctx context.Context, organizationID string) (string, string, definitions.ManagementMap, error) {
+	meta, err := s.LookupOrganizationDatabase(ctx, organizationID)
+	if err != nil {
+		return "", "", nil, err
+	}
+	management, err := s.LoadManagementPolicies(ctx, meta.DefinitionID)
+	if err != nil {
+		return "", "", nil, err
+	}
+	return meta.ID, meta.AuthToken, management, nil
+}
+
+func (s *Store) LoadManagementPolicies(ctx context.Context, definitionID int32) (definitions.ManagementMap, error) {
+	if s == nil || s.conn == nil {
+		return nil, errors.New("primary store not initialized")
+	}
+	rows, err := s.conn.QueryContext(ctx, `
+		SELECT role, action, COALESCE(target_roles_json, '')
+		FROM atombase_management_policies
+		WHERE definition_id = ?
+		ORDER BY role, action
+	`, definitionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	management := definitions.ManagementMap{}
+	for rows.Next() {
+		var role string
+		var action string
+		var targetRolesJSON string
+		if err := rows.Scan(&role, &action, &targetRolesJSON); err != nil {
+			return nil, err
+		}
+		policy := management[role]
+		switch definitions.ManagementAction(action) {
+		case definitions.ManagementActionInvite:
+			policy.Invite = definitions.ManagementPermission{Allowed: true}
+			if targetRolesJSON == "" {
+				policy.Invite.Any = true
+			} else if err := json.Unmarshal([]byte(targetRolesJSON), &policy.Invite.Roles); err != nil {
+				return nil, err
+			}
+		case definitions.ManagementActionAssignRole:
+			policy.AssignRole = definitions.ManagementPermission{Allowed: true}
+			if targetRolesJSON == "" {
+				policy.AssignRole.Any = true
+			} else if err := json.Unmarshal([]byte(targetRolesJSON), &policy.AssignRole.Roles); err != nil {
+				return nil, err
+			}
+		case definitions.ManagementActionRemoveMember:
+			policy.RemoveMember = definitions.ManagementPermission{Allowed: true}
+			if targetRolesJSON == "" {
+				policy.RemoveMember.Any = true
+			} else if err := json.Unmarshal([]byte(targetRolesJSON), &policy.RemoveMember.Roles); err != nil {
+				return nil, err
+			}
+		case definitions.ManagementActionUpdateOrg:
+			policy.UpdateOrg = true
+		case definitions.ManagementActionDeleteOrg:
+			policy.DeleteOrg = true
+		case definitions.ManagementActionTransferOwnership:
+			policy.TransferOwnership = true
+		}
+		management[role] = policy
+	}
+	if len(management) == 0 {
+		return nil, rows.Err()
+	}
+	return management, rows.Err()
+}
+
 func decodeStoredDatabaseToken(storedToken []byte) (string, error) {
 	if len(storedToken) == 0 {
 		return "", nil

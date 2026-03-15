@@ -38,6 +38,13 @@ CREATE TABLE atombase_access_policies (
 	conditions_json TEXT,
 	PRIMARY KEY(definition_id, version, table_name, operation)
 );
+CREATE TABLE atombase_management_policies (
+	definition_id INTEGER NOT NULL,
+	role TEXT NOT NULL,
+	action TEXT NOT NULL,
+	target_roles_json TEXT,
+	PRIMARY KEY(definition_id, role, action)
+);
 CREATE TABLE atombase_migrations (
 	id INTEGER PRIMARY KEY,
 	definition_id INTEGER NOT NULL,
@@ -279,6 +286,54 @@ func TestCreateDatabase_AttachesUserAndOrgMetadata(t *testing.T) {
 	}
 	if !foundOwnerSeed {
 		t.Fatal("expected org database initialization to seed owner membership")
+	}
+}
+
+func TestCreateDefinition_PersistsManagementPolicies(t *testing.T) {
+	api, db := setupPlatformAPI(t)
+	defer db.Close()
+
+	created, err := api.createDefinition(context.Background(), CreateDefinitionRequest{
+		Name:  "workspace",
+		Type:  "organization",
+		Roles: []string{"owner", "admin", "member", "viewer"},
+		Management: ManagementMap{
+			"owner": {
+				Invite:            ManagementPermission{Allowed: true, Any: true},
+				AssignRole:        ManagementPermission{Allowed: true, Any: true},
+				RemoveMember:      ManagementPermission{Allowed: true, Any: true},
+				UpdateOrg:         true,
+				DeleteOrg:         true,
+				TransferOwnership: true,
+			},
+			"admin": {
+				Invite:       ManagementPermission{Allowed: true, Roles: []string{"member", "viewer"}},
+				AssignRole:   ManagementPermission{Allowed: true, Roles: []string{"member", "viewer"}},
+				RemoveMember: ManagementPermission{Allowed: true, Roles: []string{"member", "viewer"}},
+			},
+		},
+		Schema: Schema{Tables: []Table{{Name: "projects", Pk: []string{"id"}, Columns: map[string]Col{
+			"id": {Name: "id", Type: "INTEGER"},
+		}}}},
+		Access: map[string]OperationPolicy{"projects": {Select: &Condition{Field: "auth.status", Op: "eq", Value: "member"}}},
+	})
+	if err != nil {
+		t.Fatalf("createDefinition(org with management) failed: %v", err)
+	}
+
+	if !created.Management["owner"].Invite.Any {
+		t.Fatal("expected owner invite management to round-trip")
+	}
+	if got := created.Management["admin"].AssignRole.Roles; len(got) != 2 || got[0] != "member" || got[1] != "viewer" {
+		t.Fatalf("unexpected admin assignRole targets: %#v", got)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM atombase_management_policies WHERE definition_id = ?`, created.ID).Scan(&count); err != nil {
+		t.Fatalf("count management policies: %v", err)
+	}
+	if count != 9 {
+		t.Fatalf("expected 9 management policy rows, got %d", count)
 	}
 }
 

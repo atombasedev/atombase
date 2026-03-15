@@ -16,6 +16,9 @@ type Definition = definitions.Definition
 type Condition = definitions.Condition
 type AccessMap = definitions.AccessMap
 type OperationPolicy = definitions.OperationPolicy
+type ManagementPermission = definitions.ManagementPermission
+type ManagementPolicy = definitions.ManagementPolicy
+type ManagementMap = definitions.ManagementMap
 type DefinitionVersion struct {
 	ID           int32     `json:"id"`
 	DefinitionID int32     `json:"definitionId"`
@@ -26,17 +29,19 @@ type DefinitionVersion struct {
 }
 
 type CreateDefinitionRequest struct {
-	Name   string                     `json:"name"`
-	Type   definitions.DefinitionType `json:"type"`
-	Roles  []string                   `json:"roles,omitempty"`
-	Schema Schema                     `json:"schema"`
-	Access definitions.AccessMap      `json:"access"`
+	Name       string                     `json:"name"`
+	Type       definitions.DefinitionType `json:"type"`
+	Roles      []string                   `json:"roles,omitempty"`
+	Management definitions.ManagementMap  `json:"management,omitempty"`
+	Schema     Schema                     `json:"schema"`
+	Access     definitions.AccessMap      `json:"access"`
 }
 
 type PushDefinitionRequest struct {
-	Schema Schema                `json:"schema"`
-	Access definitions.AccessMap `json:"access"`
-	Merge  []Merge               `json:"merge,omitempty"`
+	Schema     Schema                    `json:"schema"`
+	Access     definitions.AccessMap     `json:"access"`
+	Management definitions.ManagementMap `json:"management,omitempty"`
+	Merge      []Merge                   `json:"merge,omitempty"`
 }
 
 // SchemaDiff represents a single schema modification.

@@ -46,7 +46,7 @@ var openOrganizationTenantDB tenantOpener = func(databaseID, authToken string) (
 }
 
 func (api *API) handleListOrganizationMembers(w http.ResponseWriter, r *http.Request) {
-	session, err := api.getSession(r)
+	actor, err := api.getOrgActor(r)
 	if err != nil {
 		tools.RespErr(w, tools.UnauthorizedErr("invalid session"))
 		return
@@ -56,7 +56,7 @@ func (api *API) handleListOrganizationMembers(w http.ResponseWriter, r *http.Req
 		tools.RespErr(w, tools.InvalidRequestErr("organization id is required"))
 		return
 	}
-	members, err := api.listOrganizationMembers(r.Context(), session, orgID)
+	members, err := api.listOrganizationMembers(r.Context(), actor, orgID)
 	if err != nil {
 		tools.RespErr(w, err)
 		return
@@ -65,7 +65,7 @@ func (api *API) handleListOrganizationMembers(w http.ResponseWriter, r *http.Req
 }
 
 func (api *API) handleCreateOrganizationMember(w http.ResponseWriter, r *http.Request) {
-	session, err := api.getSession(r)
+	actor, err := api.getOrgActor(r)
 	if err != nil {
 		tools.RespErr(w, tools.UnauthorizedErr("invalid session"))
 		return
@@ -81,7 +81,7 @@ func (api *API) handleCreateOrganizationMember(w http.ResponseWriter, r *http.Re
 		tools.RespErr(w, tools.ErrInvalidJSON)
 		return
 	}
-	member, err := api.createOrganizationMember(r.Context(), session, orgID, req)
+	member, err := api.createOrganizationMember(r.Context(), actor, orgID, req)
 	if err != nil {
 		tools.RespErr(w, err)
 		return
@@ -90,7 +90,7 @@ func (api *API) handleCreateOrganizationMember(w http.ResponseWriter, r *http.Re
 }
 
 func (api *API) handleUpdateOrganizationMember(w http.ResponseWriter, r *http.Request) {
-	session, err := api.getSession(r)
+	actor, err := api.getOrgActor(r)
 	if err != nil {
 		tools.RespErr(w, tools.UnauthorizedErr("invalid session"))
 		return
@@ -111,7 +111,7 @@ func (api *API) handleUpdateOrganizationMember(w http.ResponseWriter, r *http.Re
 		tools.RespErr(w, tools.ErrInvalidJSON)
 		return
 	}
-	member, err := api.updateOrganizationMember(r.Context(), session, orgID, userID, req)
+	member, err := api.updateOrganizationMember(r.Context(), actor, orgID, userID, req)
 	if err != nil {
 		tools.RespErr(w, err)
 		return
@@ -120,7 +120,7 @@ func (api *API) handleUpdateOrganizationMember(w http.ResponseWriter, r *http.Re
 }
 
 func (api *API) handleDeleteOrganizationMember(w http.ResponseWriter, r *http.Request) {
-	session, err := api.getSession(r)
+	actor, err := api.getOrgActor(r)
 	if err != nil {
 		tools.RespErr(w, tools.UnauthorizedErr("invalid session"))
 		return
@@ -135,35 +135,44 @@ func (api *API) handleDeleteOrganizationMember(w http.ResponseWriter, r *http.Re
 		tools.RespErr(w, tools.InvalidRequestErr("user id is required"))
 		return
 	}
-	if err := api.deleteOrganizationMember(r.Context(), session, orgID, userID); err != nil {
+	if err := api.deleteOrganizationMember(r.Context(), actor, orgID, userID); err != nil {
 		tools.RespErr(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (api *API) listOrganizationMembers(ctx context.Context, session *Session, organizationID string) ([]OrganizationMember, error) {
-	db, err := api.connOrganizationTenant(ctx, organizationID)
+func (api *API) listOrganizationMembers(ctx context.Context, actor *orgActor, organizationID string) ([]OrganizationMember, error) {
+	db, _, err := api.connOrganizationTenant(ctx, actor, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 
-	rows, err := db.QueryContext(ctx, `
-		WITH actor AS (
-			SELECT 1 AS allowed
-			FROM atombase_membership
-			WHERE user_id = ? AND status = 'active'
-		),
-		members AS (
+	var rows *sql.Rows
+	if actor.IsService {
+		rows, err = db.QueryContext(ctx, `
 			SELECT user_id, role, status, created_at
 			FROM atombase_membership
-			WHERE EXISTS (SELECT 1 FROM actor)
 			ORDER BY created_at ASC, user_id ASC
-		)
-		SELECT user_id, role, status, created_at
-		FROM members
-	`, session.UserID)
+		`)
+	} else {
+		rows, err = db.QueryContext(ctx, `
+			WITH actor AS (
+				SELECT 1 AS allowed
+				FROM atombase_membership
+				WHERE user_id = ? AND status = 'active'
+			),
+			members AS (
+				SELECT user_id, role, status, created_at
+				FROM atombase_membership
+				WHERE EXISTS (SELECT 1 FROM actor)
+				ORDER BY created_at ASC, user_id ASC
+			)
+			SELECT user_id, role, status, created_at
+			FROM members
+		`, actor.UserID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +195,7 @@ func (api *API) listOrganizationMembers(ctx context.Context, session *Session, o
 	return members, nil
 }
 
-func (api *API) createOrganizationMember(ctx context.Context, session *Session, organizationID string, req createOrganizationMemberRequest) (*OrganizationMember, error) {
+func (api *API) createOrganizationMember(ctx context.Context, actor *orgActor, organizationID string, req createOrganizationMemberRequest) (*OrganizationMember, error) {
 	req.UserID = strings.TrimSpace(req.UserID)
 	req.Role = strings.TrimSpace(req.Role)
 	req.Status = strings.TrimSpace(req.Status)
@@ -200,26 +209,44 @@ func (api *API) createOrganizationMember(ctx context.Context, session *Session, 
 		req.Status = "active"
 	}
 
-	db, err := api.connOrganizationTenant(ctx, organizationID)
+	db, management, err := api.connOrganizationTenant(ctx, actor, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 
-	row := db.QueryRowContext(ctx, `
-		INSERT INTO atombase_membership (user_id, role, status)
-		SELECT ?, ?, ?
-		WHERE EXISTS (
-			SELECT 1
-			FROM atombase_membership actor
-			WHERE actor.user_id = ?
-			  AND actor.status = 'active'
-			  AND actor.role IN ('owner', 'admin')
-			  AND (? != 'owner' OR actor.role = 'owner')
-		)
-		ON CONFLICT(user_id) DO NOTHING
-		RETURNING user_id, role, status, created_at
-	`, req.UserID, req.Role, req.Status, session.UserID, req.Role)
+	if !actor.IsService {
+		actorRole, err := lookupOrganizationMemberRole(ctx, db, actor.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if !managementAllows(management, actorRole, "invite", req.Role) {
+			return nil, tools.UnauthorizedErr("organization member creation is not allowed")
+		}
+	}
+
+	var row *sql.Row
+	if actor.IsService {
+		row = db.QueryRowContext(ctx, `
+			INSERT INTO atombase_membership (user_id, role, status)
+			VALUES (?, ?, ?)
+			ON CONFLICT(user_id) DO NOTHING
+			RETURNING user_id, role, status, created_at
+		`, req.UserID, req.Role, req.Status)
+	} else {
+		row = db.QueryRowContext(ctx, `
+			INSERT INTO atombase_membership (user_id, role, status)
+			SELECT ?, ?, ?
+			WHERE EXISTS (
+				SELECT 1
+				FROM atombase_membership actor
+				WHERE actor.user_id = ?
+				  AND actor.status = 'active'
+			)
+			ON CONFLICT(user_id) DO NOTHING
+			RETURNING user_id, role, status, created_at
+		`, req.UserID, req.Role, req.Status, actor.UserID)
+	}
 
 	var member OrganizationMember
 	if err := row.Scan(&member.UserID, &member.Role, &member.Status, &member.CreatedAt); err != nil {
@@ -234,7 +261,7 @@ func (api *API) createOrganizationMember(ctx context.Context, session *Session, 
 	return &member, nil
 }
 
-func (api *API) updateOrganizationMember(ctx context.Context, session *Session, organizationID, memberUserID string, req updateOrganizationMemberRequest) (*OrganizationMember, error) {
+func (api *API) updateOrganizationMember(ctx context.Context, actor *orgActor, organizationID, memberUserID string, req updateOrganizationMemberRequest) (*OrganizationMember, error) {
 	if req.Role == nil && req.Status == nil {
 		return nil, tools.InvalidRequestErr("role or status is required")
 	}
@@ -253,11 +280,27 @@ func (api *API) updateOrganizationMember(ctx context.Context, session *Session, 
 		req.Status = &trimmed
 	}
 
-	db, err := api.connOrganizationTenant(ctx, organizationID)
+	db, management, err := api.connOrganizationTenant(ctx, actor, organizationID)
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
+	targetRole, err := lookupOrganizationMemberRole(ctx, db, memberUserID)
+	if err != nil {
+		return nil, err
+	}
+	if !actor.IsService {
+		actorRole, err := lookupOrganizationMemberRole(ctx, db, actor.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if req.Role != nil && !managementAllows(management, actorRole, "assignRole", *req.Role) {
+			return nil, tools.UnauthorizedErr("organization member update is not allowed")
+		}
+		if req.Role == nil && req.Status != nil && !managementAllows(management, actorRole, "assignRole", targetRole) {
+			return nil, tools.UnauthorizedErr("organization member update is not allowed")
+		}
+	}
 
 	newRole := sql.NullString{}
 	newStatus := sql.NullString{}
@@ -270,52 +313,54 @@ func (api *API) updateOrganizationMember(ctx context.Context, session *Session, 
 		newStatus.String = *req.Status
 	}
 
-	row := db.QueryRowContext(ctx, `
-		UPDATE atombase_membership
-		SET role = COALESCE(?, role),
-		    status = COALESCE(?, status)
-		WHERE user_id = ?
-		  AND EXISTS (
-		    SELECT 1
-		    FROM atombase_membership actor
-		    WHERE actor.user_id = ?
-		      AND actor.status = 'active'
-		      AND actor.role IN ('owner', 'admin')
-		  )
-		  AND (
-		    (SELECT role FROM atombase_membership WHERE user_id = ?) != 'owner'
-		    OR EXISTS (
-		      SELECT 1
-		      FROM atombase_membership actor
-		      WHERE actor.user_id = ?
-		        AND actor.status = 'active'
-		        AND actor.role = 'owner'
-		    )
-		  )
-		  AND (
-		    COALESCE(?, (SELECT role FROM atombase_membership WHERE user_id = ?)) = 'owner'
-		    OR EXISTS (
-		      SELECT 1
-		      FROM atombase_membership actor
-		      WHERE actor.user_id = ?
-		        AND actor.status = 'active'
-		        AND actor.role = 'owner'
-		    )
-		  )
-		  AND (
-		    (SELECT role FROM atombase_membership WHERE user_id = ?) != 'owner'
-		    OR (
-		      COALESCE(?, (SELECT role FROM atombase_membership WHERE user_id = ?)) = 'owner'
-		      AND COALESCE(?, (SELECT status FROM atombase_membership WHERE user_id = ?)) = 'active'
-		    )
-		    OR (
-		      SELECT COUNT(*)
-		      FROM atombase_membership
-		      WHERE role = 'owner' AND status = 'active'
-		    ) > 1
-		  )
-		RETURNING user_id, role, status, created_at
-	`, newRole, newStatus, memberUserID, session.UserID, memberUserID, session.UserID, newRole, memberUserID, session.UserID, memberUserID, newRole, memberUserID, newStatus, memberUserID)
+	var row *sql.Row
+	if actor.IsService {
+		row = db.QueryRowContext(ctx, `
+			UPDATE atombase_membership
+			SET role = COALESCE(?, role),
+			    status = COALESCE(?, status)
+			WHERE user_id = ?
+			  AND (
+			    (SELECT role FROM atombase_membership WHERE user_id = ?) != 'owner'
+			    OR (
+			      COALESCE(?, (SELECT role FROM atombase_membership WHERE user_id = ?)) = 'owner'
+			      AND COALESCE(?, (SELECT status FROM atombase_membership WHERE user_id = ?)) = 'active'
+			    )
+			    OR (
+			      SELECT COUNT(*)
+			      FROM atombase_membership
+			      WHERE role = 'owner' AND status = 'active'
+			    ) > 1
+			  )
+			RETURNING user_id, role, status, created_at
+		`, newRole, newStatus, memberUserID, memberUserID, newRole, memberUserID, newStatus, memberUserID)
+	} else {
+		row = db.QueryRowContext(ctx, `
+			UPDATE atombase_membership
+			SET role = COALESCE(?, role),
+			    status = COALESCE(?, status)
+			WHERE user_id = ?
+			  AND EXISTS (
+			    SELECT 1
+			    FROM atombase_membership actor
+			    WHERE actor.user_id = ?
+			      AND actor.status = 'active'
+			  )
+			  AND (
+			    (SELECT role FROM atombase_membership WHERE user_id = ?) != 'owner'
+			    OR (
+			      COALESCE(?, (SELECT role FROM atombase_membership WHERE user_id = ?)) = 'owner'
+			      AND COALESCE(?, (SELECT status FROM atombase_membership WHERE user_id = ?)) = 'active'
+			    )
+			    OR (
+			      SELECT COUNT(*)
+			      FROM atombase_membership
+			      WHERE role = 'owner' AND status = 'active'
+			    ) > 1
+			  )
+			RETURNING user_id, role, status, created_at
+		`, newRole, newStatus, memberUserID, actor.UserID, memberUserID, newRole, memberUserID, newStatus, memberUserID)
+	}
 
 	var member OrganizationMember
 	if err := row.Scan(&member.UserID, &member.Role, &member.Status, &member.CreatedAt); err != nil {
@@ -327,41 +372,64 @@ func (api *API) updateOrganizationMember(ctx context.Context, session *Session, 
 	return &member, nil
 }
 
-func (api *API) deleteOrganizationMember(ctx context.Context, session *Session, organizationID, memberUserID string) error {
-	db, err := api.connOrganizationTenant(ctx, organizationID)
+func (api *API) deleteOrganizationMember(ctx context.Context, actor *orgActor, organizationID, memberUserID string) error {
+	db, management, err := api.connOrganizationTenant(ctx, actor, organizationID)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	targetRole, err := lookupOrganizationMemberRole(ctx, db, memberUserID)
+	if err != nil {
+		return err
+	}
+	if !actor.IsService {
+		actorRole, err := lookupOrganizationMemberRole(ctx, db, actor.UserID)
+		if err != nil {
+			return err
+		}
+		if !managementAllows(management, actorRole, "removeMember", targetRole) {
+			return tools.UnauthorizedErr("organization member deletion is not allowed")
+		}
+	}
 
-	res, err := db.ExecContext(ctx, `
-		DELETE FROM atombase_membership
-		WHERE user_id = ?
-		  AND EXISTS (
-		    SELECT 1
-		    FROM atombase_membership actor
-		    WHERE actor.user_id = ?
-		      AND actor.status = 'active'
-		      AND actor.role IN ('owner', 'admin')
-		  )
-		  AND (
-		    (SELECT role FROM atombase_membership WHERE user_id = ?) != 'owner'
-		    OR (
-		      EXISTS (
-		        SELECT 1
-		        FROM atombase_membership actor
-		        WHERE actor.user_id = ?
-		          AND actor.status = 'active'
-		          AND actor.role = 'owner'
-		      )
-		      AND (
-		        SELECT COUNT(*)
-		        FROM atombase_membership
-		        WHERE role = 'owner' AND status = 'active'
-		      ) > 1
-		    )
-		  )
-	`, memberUserID, session.UserID, memberUserID, session.UserID)
+	var res sql.Result
+	if actor.IsService {
+		res, err = db.ExecContext(ctx, `
+			DELETE FROM atombase_membership
+			WHERE user_id = ?
+			  AND (
+			    (SELECT role FROM atombase_membership WHERE user_id = ?) != 'owner'
+			    OR (
+			      (
+			        SELECT COUNT(*)
+			        FROM atombase_membership
+			        WHERE role = 'owner' AND status = 'active'
+			      ) > 1
+			    )
+			  )
+		`, memberUserID, memberUserID)
+	} else {
+		res, err = db.ExecContext(ctx, `
+			DELETE FROM atombase_membership
+			WHERE user_id = ?
+			  AND EXISTS (
+			    SELECT 1
+			    FROM atombase_membership actor
+			    WHERE actor.user_id = ?
+			      AND actor.status = 'active'
+			  )
+			  AND (
+			    (SELECT role FROM atombase_membership WHERE user_id = ?) != 'owner'
+			    OR (
+			      (
+			        SELECT COUNT(*)
+			        FROM atombase_membership
+			        WHERE role = 'owner' AND status = 'active'
+			      ) > 1
+			    )
+			  )
+		`, memberUserID, actor.UserID, memberUserID)
+	}
 	if err != nil {
 		return err
 	}
@@ -375,21 +443,78 @@ func (api *API) deleteOrganizationMember(ctx context.Context, session *Session, 
 	return nil
 }
 
-func (api *API) connOrganizationTenant(ctx context.Context, organizationID string) (*sql.DB, error) {
-	if api == nil || api.store == nil {
-		return nil, errors.New("auth api not initialized")
-	}
-	databaseID, authToken, err := api.store.LookupOrganizationTenant(ctx, organizationID)
+func lookupOrganizationMemberRole(ctx context.Context, db *sql.DB, userID string) (string, error) {
+	var role string
+	err := db.QueryRowContext(ctx, `
+		SELECT role
+		FROM atombase_membership
+		WHERE user_id = ? AND status = 'active'
+	`, userID).Scan(&role)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", tools.UnauthorizedErr("organization membership is required")
+		}
+		return "", err
+	}
+	return role, nil
+}
+
+func managementAllows(management ManagementMap, actorRole string, action string, targetRole string) bool {
+	policy, ok := management[actorRole]
+	if !ok {
+		return false
+	}
+	switch action {
+	case "invite":
+		return permissionAllows(policy.Invite, targetRole)
+	case "assignRole":
+		return permissionAllows(policy.AssignRole, targetRole)
+	case "removeMember":
+		return permissionAllows(policy.RemoveMember, targetRole)
+	case "updateOrg":
+		return policy.UpdateOrg
+	case "deleteOrg":
+		return policy.DeleteOrg
+	case "transferOwnership":
+		return policy.TransferOwnership
+	default:
+		return false
+	}
+}
+
+func permissionAllows(permission ManagementPermission, targetRole string) bool {
+	if permission.Any {
+		return true
+	}
+	if len(permission.Roles) == 0 {
+		return false
+	}
+	for _, role := range permission.Roles {
+		if role == targetRole {
+			return true
+		}
+	}
+	return false
+}
+
+func (api *API) connOrganizationTenant(ctx context.Context, actor *orgActor, organizationID string) (*sql.DB, ManagementMap, error) {
+	if api == nil || api.store == nil {
+		return nil, nil, errors.New("auth api not initialized")
+	}
+	databaseID, authToken, management, err := api.store.LookupOrganizationAuthz(ctx, organizationID)
+	if err != nil {
+		if actor != nil && !actor.IsService {
+			return nil, nil, tools.UnauthorizedErr("organization access denied")
+		}
+		return nil, nil, err
 	}
 	db, err := openOrganizationTenantDB(databaseID, authToken)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return nil, err
+		return nil, nil, err
 	}
-	return db, nil
+	return db, management, nil
 }

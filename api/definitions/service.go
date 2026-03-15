@@ -107,6 +107,66 @@ func ParseAndValidateAccess(defType DefinitionType, raw AccessMap, schemaTables 
 	return rows, nil
 }
 
+func ParseAndValidateManagement(defType DefinitionType, roles []string, raw ManagementMap) ([]ManagementRule, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if defType != DefinitionTypeOrganization {
+		return nil, fmt.Errorf("management policies are only valid for organization definitions")
+	}
+	roleSet := make(map[string]struct{}, len(roles))
+	for _, role := range roles {
+		roleSet[role] = struct{}{}
+	}
+	var rows []ManagementRule
+	for role, policy := range raw {
+		if _, ok := roleSet[role]; !ok {
+			return nil, fmt.Errorf("management policy references unknown role %q", role)
+		}
+		for _, item := range []struct {
+			action ManagementAction
+			perm   ManagementPermission
+		}{
+			{action: ManagementActionInvite, perm: policy.Invite},
+			{action: ManagementActionAssignRole, perm: policy.AssignRole},
+			{action: ManagementActionRemoveMember, perm: policy.RemoveMember},
+		} {
+			if !item.perm.Allowed {
+				continue
+			}
+			if !item.perm.Any {
+				for _, targetRole := range item.perm.Roles {
+					if _, ok := roleSet[targetRole]; !ok {
+						return nil, fmt.Errorf("management policy for role %q references unknown target role %q", role, targetRole)
+					}
+				}
+			}
+			rows = append(rows, ManagementRule{
+				Role:        role,
+				Action:      item.action,
+				TargetRoles: append([]string(nil), item.perm.Roles...),
+			})
+		}
+		for _, item := range []struct {
+			action  ManagementAction
+			allowed bool
+		}{
+			{action: ManagementActionUpdateOrg, allowed: policy.UpdateOrg},
+			{action: ManagementActionDeleteOrg, allowed: policy.DeleteOrg},
+			{action: ManagementActionTransferOwnership, allowed: policy.TransferOwnership},
+		} {
+			if !item.allowed {
+				continue
+			}
+			rows = append(rows, ManagementRule{
+				Role:   role,
+				Action: item.action,
+			})
+		}
+	}
+	return rows, nil
+}
+
 func ValidateConditionContext(cond Condition, op string, defType DefinitionType) error {
 	if cond.Field != "" {
 		if strings.HasPrefix(cond.Field, "old.") && op == "insert" {

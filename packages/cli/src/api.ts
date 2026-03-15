@@ -2,6 +2,7 @@ import type {
   AccessDefinition,
   DefinitionDefinition,
   DefinitionType,
+  ManagementDefinition,
   SchemaDefinition,
   TableDefinition,
   ColumnDefinition,
@@ -94,6 +95,7 @@ type CreateDefinitionBody = {
   name: string;
   type: DefinitionType;
   roles?: string[];
+  management?: ManagementDefinition;
   schema: SchemaDefinition;
   access: AccessDefinition;
 };
@@ -101,6 +103,7 @@ type CreateDefinitionBody = {
 type PushDefinitionBody = {
   schema: SchemaDefinition;
   access: AccessDefinition;
+  management?: ManagementDefinition;
   merge?: Merge[];
 };
 
@@ -109,6 +112,7 @@ function toCreateDefinitionBody(definition: DefinitionDefinition): CreateDefinit
     name: definition.name ?? "",
     type: definition.type,
     roles: definition.type === "organization" ? definition.roles : undefined,
+    management: definition.type === "organization" ? definition.management : undefined,
     schema: definition.schema,
     access: definition.access,
   };
@@ -118,6 +122,7 @@ function toPushDefinitionBody(definition: DefinitionDefinition, merges?: Merge[]
   return {
     schema: definition.schema,
     access: definition.access,
+    management: definition.type === "organization" ? definition.management : undefined,
     merge: merges,
   };
 }

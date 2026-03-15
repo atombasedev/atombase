@@ -26,6 +26,68 @@ func schemaTableSet(schema Schema) map[string]struct{} {
 	return out
 }
 
+func (api *API) loadManagementPolicies(ctx context.Context, definitionID int32) (definitions.ManagementMap, error) {
+	conn, err := api.dbConn()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := conn.QueryContext(ctx, `
+		SELECT role, action, COALESCE(target_roles_json, '')
+		FROM atombase_management_policies
+		WHERE definition_id = ?
+		ORDER BY role, action
+	`, definitionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	management := definitions.ManagementMap{}
+	for rows.Next() {
+		var role string
+		var action string
+		var targetRolesJSON string
+		if err := rows.Scan(&role, &action, &targetRolesJSON); err != nil {
+			return nil, err
+		}
+		policy := management[role]
+		switch definitions.ManagementAction(action) {
+		case definitions.ManagementActionInvite:
+			policy.Invite = definitions.ManagementPermission{Allowed: true}
+			if targetRolesJSON == "" {
+				policy.Invite.Any = true
+			} else if err := json.Unmarshal([]byte(targetRolesJSON), &policy.Invite.Roles); err != nil {
+				return nil, err
+			}
+		case definitions.ManagementActionAssignRole:
+			policy.AssignRole = definitions.ManagementPermission{Allowed: true}
+			if targetRolesJSON == "" {
+				policy.AssignRole.Any = true
+			} else if err := json.Unmarshal([]byte(targetRolesJSON), &policy.AssignRole.Roles); err != nil {
+				return nil, err
+			}
+		case definitions.ManagementActionRemoveMember:
+			policy.RemoveMember = definitions.ManagementPermission{Allowed: true}
+			if targetRolesJSON == "" {
+				policy.RemoveMember.Any = true
+			} else if err := json.Unmarshal([]byte(targetRolesJSON), &policy.RemoveMember.Roles); err != nil {
+				return nil, err
+			}
+		case definitions.ManagementActionUpdateOrg:
+			policy.UpdateOrg = true
+		case definitions.ManagementActionDeleteOrg:
+			policy.DeleteOrg = true
+		case definitions.ManagementActionTransferOwnership:
+			policy.TransferOwnership = true
+		}
+		management[role] = policy
+	}
+	if len(management) == 0 {
+		return nil, rows.Err()
+	}
+	return management, rows.Err()
+}
+
 func (api *API) listDefinitions(ctx context.Context) ([]Definition, error) {
 	conn, err := api.dbConn()
 	if err != nil {
@@ -51,6 +113,10 @@ func (api *API) listDefinitions(ctx context.Context) ([]Definition, error) {
 		}
 		item.Type = definitions.DefinitionType(defType)
 		_ = json.Unmarshal([]byte(rolesJSON), &item.Roles)
+		item.Management, err = api.loadManagementPolicies(ctx, item.ID)
+		if err != nil {
+			return nil, err
+		}
 		items = append(items, item)
 	}
 	if items == nil {
@@ -83,6 +149,10 @@ func (api *API) getDefinition(ctx context.Context, name string) (*Definition, er
 	item.Type = definitions.DefinitionType(defType)
 	item.Schema = json.RawMessage(schemaJSON)
 	_ = json.Unmarshal([]byte(rolesJSON), &item.Roles)
+	item.Management, err = api.loadManagementPolicies(ctx, item.ID)
+	if err != nil {
+		return nil, err
+	}
 	return &item, nil
 }
 
@@ -92,6 +162,10 @@ func (api *API) createDefinition(ctx context.Context, req CreateDefinitionReques
 		return nil, err
 	}
 	accessRows, err := definitions.ParseAndValidateAccess(req.Type, req.Access, schemaTableSet(req.Schema))
+	if err != nil {
+		return nil, tools.InvalidRequestErr(err.Error())
+	}
+	managementRows, err := definitions.ParseAndValidateManagement(req.Type, req.Roles, req.Management)
 	if err != nil {
 		return nil, tools.InvalidRequestErr(err.Error())
 	}
@@ -151,6 +225,22 @@ func (api *API) createDefinition(ctx context.Context, req CreateDefinitionReques
 			return nil, err
 		}
 	}
+	for _, row := range managementRows {
+		targetRolesJSON := ""
+		if len(row.TargetRoles) > 0 {
+			raw, err := json.Marshal(row.TargetRoles)
+			if err != nil {
+				return nil, err
+			}
+			targetRolesJSON = string(raw)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO atombase_management_policies (definition_id, role, action, target_roles_json)
+			VALUES (?, ?, ?, ?)
+		`, defID, row.Role, string(row.Action), targetRolesJSON); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -179,6 +269,10 @@ func (api *API) pushDefinition(ctx context.Context, name string, req PushDefinit
 	}
 
 	accessRows, err := definitions.ParseAndValidateAccess(current.Type, req.Access, schemaTableSet(req.Schema))
+	if err != nil {
+		return nil, tools.InvalidRequestErr(err.Error())
+	}
+	managementRows, err := definitions.ParseAndValidateManagement(current.Type, current.Roles, req.Management)
 	if err != nil {
 		return nil, tools.InvalidRequestErr(err.Error())
 	}
@@ -262,6 +356,28 @@ func (api *API) pushDefinition(ctx context.Context, name string, req PushDefinit
 			INSERT INTO atombase_access_policies (definition_id, version, table_name, operation, conditions_json)
 			VALUES (?, ?, ?, ?, ?)
 		`, current.ID, version, row.Table, row.Operation, cond); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM atombase_management_policies
+		WHERE definition_id = ?
+	`, current.ID); err != nil {
+		return nil, err
+	}
+	for _, row := range managementRows {
+		targetRolesJSON := ""
+		if len(row.TargetRoles) > 0 {
+			raw, err := json.Marshal(row.TargetRoles)
+			if err != nil {
+				return nil, err
+			}
+			targetRolesJSON = string(raw)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO atombase_management_policies (definition_id, role, action, target_roles_json)
+			VALUES (?, ?, ?, ?)
+		`, current.ID, row.Role, string(row.Action), targetRolesJSON); err != nil {
 			return nil, err
 		}
 	}

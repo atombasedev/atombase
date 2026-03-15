@@ -8,17 +8,41 @@ import (
 	"github.com/atombasedev/atombase/tools"
 )
 
-type organizationStore interface {
+type ManagementPermission struct {
+	Any   bool
+	Roles []string
+}
+
+type ManagementPolicy struct {
+	Invite            ManagementPermission
+	AssignRole        ManagementPermission
+	RemoveMember      ManagementPermission
+	UpdateOrg         bool
+	DeleteOrg         bool
+	TransferOwnership bool
+}
+
+type ManagementMap map[string]ManagementPolicy
+
+type OrganizationResolver interface {
 	DB() *sql.DB
 	LookupOrganizationTenant(ctx context.Context, organizationID string) (string, string, error)
+	LookupOrganizationAuthz(ctx context.Context, organizationID string) (string, string, ManagementMap, error)
+	DeleteOrganization(ctx context.Context, organizationID string) error
 }
 
 type API struct {
 	db    *sql.DB
-	store organizationStore
+	store OrganizationResolver
 }
 
-func NewAPI(store organizationStore) *API {
+type orgActor struct {
+	Session   *Session
+	UserID    string
+	IsService bool
+}
+
+func NewAPI(store OrganizationResolver) *API {
 	if store == nil {
 		return &API{}
 	}
@@ -34,6 +58,9 @@ func (api *API) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/orgs/{orgID}/members", api.withBody(api.handleCreateOrganizationMember))
 	mux.HandleFunc("PATCH /auth/orgs/{orgID}/members/{userID}", api.withBody(api.handleUpdateOrganizationMember))
 	mux.HandleFunc("DELETE /auth/orgs/{orgID}/members/{userID}", api.handleDeleteOrganizationMember)
+	mux.HandleFunc("PATCH /auth/orgs/{orgID}", api.withBody(api.handleUpdateOrganization))
+	mux.HandleFunc("DELETE /auth/orgs/{orgID}", api.handleDeleteOrganization)
+	mux.HandleFunc("POST /auth/orgs/{orgID}/transfer-ownership", api.withBody(api.handleTransferOrganizationOwnership))
 }
 
 func (api *API) withBody(handler http.HandlerFunc) http.HandlerFunc {
@@ -134,4 +161,23 @@ func (api *API) getSession(r *http.Request) (*Session, error) {
 		return nil, ErrInvalidSession
 	}
 	return ValidateSession(SessionToken(auth.Token), api.db, r.Context())
+}
+
+func (api *API) getOrgActor(r *http.Request) (*orgActor, error) {
+	auth := tools.GetAuthContext(r.Context())
+	switch auth.Role {
+	case tools.RoleService:
+		return &orgActor{IsService: true}, nil
+	case tools.RoleUser:
+		session, err := api.getSession(r)
+		if err != nil {
+			return nil, err
+		}
+		return &orgActor{
+			Session: session,
+			UserID:  session.UserID,
+		}, nil
+	default:
+		return nil, ErrInvalidSession
+	}
 }

@@ -31,6 +31,40 @@ func (s testOrganizationStore) LookupOrganizationTenant(ctx context.Context, org
 	return resolvedID, s.authToken, nil
 }
 
+func (s testOrganizationStore) LookupOrganizationAuthz(ctx context.Context, organizationID string) (string, string, ManagementMap, error) {
+	databaseID, authToken, err := s.LookupOrganizationTenant(ctx, organizationID)
+	if err != nil {
+		return "", "", nil, err
+	}
+	return databaseID, authToken, ManagementMap{
+		"owner": {
+			Invite:            ManagementPermission{Any: true},
+			AssignRole:        ManagementPermission{Any: true},
+			RemoveMember:      ManagementPermission{Any: true},
+			UpdateOrg:         true,
+			DeleteOrg:         true,
+			TransferOwnership: true,
+		},
+		"admin": {
+			Invite:       ManagementPermission{Roles: []string{"member", "viewer"}},
+			AssignRole:   ManagementPermission{Roles: []string{"member", "viewer"}},
+			RemoveMember: ManagementPermission{Roles: []string{"member", "viewer"}},
+		},
+	}, nil
+}
+
+func (s testOrganizationStore) DeleteOrganization(ctx context.Context, organizationID string) error {
+	var databaseID string
+	if err := s.db.QueryRowContext(ctx, `SELECT database_id FROM atombase_organizations WHERE id = ?`, organizationID).Scan(&databaseID); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM atombase_organizations WHERE id = ?`, organizationID); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM atombase_databases WHERE id = ?`, databaseID)
+	return err
+}
+
 func setupOrganizationMembershipAPI(t *testing.T) (*API, *sql.DB, string) {
 	t.Helper()
 
@@ -54,6 +88,7 @@ func setupOrganizationMembershipAPI(t *testing.T) (*API, *sql.DB, string) {
 			name TEXT NOT NULL,
 			owner_id TEXT NOT NULL,
 			max_members INTEGER,
+			metadata TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT,
 			updated_at TEXT
 		)`,
@@ -123,7 +158,7 @@ func setupOrganizationMembershipAPI(t *testing.T) (*API, *sql.DB, string) {
 func TestListOrganizationMembers_RequiresActiveMembership(t *testing.T) {
 	api, _, _ := setupOrganizationMembershipAPI(t)
 
-	members, err := api.listOrganizationMembers(context.Background(), &Session{Id: "sess-1", UserID: "user-owner"}, "org-1")
+	members, err := api.listOrganizationMembers(context.Background(), &orgActor{Session: &Session{Id: "sess-1", UserID: "user-owner"}, UserID: "user-owner"}, "org-1")
 	if err != nil {
 		t.Fatalf("list members: %v", err)
 	}
@@ -131,7 +166,7 @@ func TestListOrganizationMembers_RequiresActiveMembership(t *testing.T) {
 		t.Fatalf("expected 3 members, got %d", len(members))
 	}
 
-	_, err = api.listOrganizationMembers(context.Background(), &Session{Id: "sess-2", UserID: "user-outsider"}, "org-1")
+	_, err = api.listOrganizationMembers(context.Background(), &orgActor{Session: &Session{Id: "sess-2", UserID: "user-outsider"}, UserID: "user-outsider"}, "org-1")
 	if !errors.Is(err, tools.ErrUnauthorized) {
 		t.Fatalf("expected unauthorized for outsider, got %v", err)
 	}
@@ -140,14 +175,14 @@ func TestListOrganizationMembers_RequiresActiveMembership(t *testing.T) {
 func TestCreateOrganizationMember_OnlyOwnerCanAssignOwnerRole(t *testing.T) {
 	api, tenantDB, _ := setupOrganizationMembershipAPI(t)
 
-	if _, err := api.createOrganizationMember(context.Background(), &Session{Id: "sess-admin", UserID: "user-admin"}, "org-1", createOrganizationMemberRequest{
+	if _, err := api.createOrganizationMember(context.Background(), &orgActor{Session: &Session{Id: "sess-admin", UserID: "user-admin"}, UserID: "user-admin"}, "org-1", createOrganizationMemberRequest{
 		UserID: "user-new-owner",
 		Role:   "owner",
 	}); !errors.Is(err, tools.ErrUnauthorized) {
 		t.Fatalf("expected admin owner assignment to fail, got %v", err)
 	}
 
-	member, err := api.createOrganizationMember(context.Background(), &Session{Id: "sess-owner", UserID: "user-owner"}, "org-1", createOrganizationMemberRequest{
+	member, err := api.createOrganizationMember(context.Background(), &orgActor{Session: &Session{Id: "sess-owner", UserID: "user-owner"}, UserID: "user-owner"}, "org-1", createOrganizationMemberRequest{
 		UserID: "user-new-owner",
 		Role:   "owner",
 	})
@@ -171,13 +206,13 @@ func TestOrganizationMembership_PreservesLastOwner(t *testing.T) {
 	api, tenantDB, _ := setupOrganizationMembershipAPI(t)
 
 	memberRole := "member"
-	if _, err := api.updateOrganizationMember(context.Background(), &Session{Id: "sess-owner", UserID: "user-owner"}, "org-1", "user-owner", updateOrganizationMemberRequest{
+	if _, err := api.updateOrganizationMember(context.Background(), &orgActor{Session: &Session{Id: "sess-owner", UserID: "user-owner"}, UserID: "user-owner"}, "org-1", "user-owner", updateOrganizationMemberRequest{
 		Role: &memberRole,
 	}); !errors.Is(err, tools.ErrUnauthorized) {
 		t.Fatalf("expected last-owner demotion to fail, got %v", err)
 	}
 
-	if err := api.deleteOrganizationMember(context.Background(), &Session{Id: "sess-owner", UserID: "user-owner"}, "org-1", "user-owner"); !errors.Is(err, tools.ErrUnauthorized) {
+	if err := api.deleteOrganizationMember(context.Background(), &orgActor{Session: &Session{Id: "sess-owner", UserID: "user-owner"}, UserID: "user-owner"}, "org-1", "user-owner"); !errors.Is(err, tools.ErrUnauthorized) {
 		t.Fatalf("expected last-owner delete to fail, got %v", err)
 	}
 
@@ -186,7 +221,7 @@ func TestOrganizationMembership_PreservesLastOwner(t *testing.T) {
 		t.Fatalf("seed second owner: %v", err)
 	}
 
-	if err := api.deleteOrganizationMember(context.Background(), &Session{Id: "sess-owner", UserID: "user-owner"}, "org-1", "user-owner-2"); err != nil {
+	if err := api.deleteOrganizationMember(context.Background(), &orgActor{Session: &Session{Id: "sess-owner", UserID: "user-owner"}, UserID: "user-owner"}, "org-1", "user-owner-2"); err != nil {
 		t.Fatalf("delete second owner: %v", err)
 	}
 
@@ -196,5 +231,83 @@ func TestOrganizationMembership_PreservesLastOwner(t *testing.T) {
 	}
 	if remaining != 1 {
 		t.Fatalf("expected 1 remaining owner, got %d", remaining)
+	}
+}
+
+func TestOrganizationMembership_HidesOrganizationExistenceFromOutsiders(t *testing.T) {
+	api, _, _ := setupOrganizationMembershipAPI(t)
+
+	outsider := &orgActor{Session: &Session{Id: "sess-outsider", UserID: "user-outsider"}, UserID: "user-outsider"}
+
+	_, errExisting := api.listOrganizationMembers(context.Background(), outsider, "org-1")
+	if !errors.Is(errExisting, tools.ErrUnauthorized) {
+		t.Fatalf("expected unauthorized for existing org outsider access, got %v", errExisting)
+	}
+
+	_, errMissing := api.listOrganizationMembers(context.Background(), outsider, "missing-org")
+	if !errors.Is(errMissing, tools.ErrUnauthorized) {
+		t.Fatalf("expected unauthorized for missing org outsider access, got %v", errMissing)
+	}
+}
+
+func TestUpdateOrganization_UsesManagementPolicy(t *testing.T) {
+	api, _, _ := setupOrganizationMembershipAPI(t)
+
+	renamed := "Acme 2"
+	org, err := api.updateOrganization(context.Background(), &orgActor{Session: &Session{Id: "sess-owner", UserID: "user-owner"}, UserID: "user-owner"}, "org-1", updateOrganizationRequest{
+		Name: &renamed,
+	})
+	if err != nil {
+		t.Fatalf("owner update org: %v", err)
+	}
+	if org.Name != "Acme 2" {
+		t.Fatalf("expected renamed org, got %q", org.Name)
+	}
+
+	_, err = api.updateOrganization(context.Background(), &orgActor{Session: &Session{Id: "sess-admin", UserID: "user-admin"}, UserID: "user-admin"}, "org-1", updateOrganizationRequest{
+		Name: &renamed,
+	})
+	if !errors.Is(err, tools.ErrUnauthorized) {
+		t.Fatalf("expected admin update org to be unauthorized, got %v", err)
+	}
+}
+
+func TestTransferOrganizationOwnership_PromotesNewOwner(t *testing.T) {
+	api, tenantDB, _ := setupOrganizationMembershipAPI(t)
+
+	org, err := api.transferOrganizationOwnership(context.Background(), &orgActor{Session: &Session{Id: "sess-owner", UserID: "user-owner"}, UserID: "user-owner"}, "org-1", transferOrganizationOwnershipRequest{
+		UserID: "user-member",
+	})
+	if err != nil {
+		t.Fatalf("transfer ownership: %v", err)
+	}
+	if org.OwnerID != "user-member" {
+		t.Fatalf("expected owner_id user-member, got %s", org.OwnerID)
+	}
+
+	var role string
+	if err := tenantDB.QueryRow(`SELECT role FROM atombase_membership WHERE user_id = 'user-member'`).Scan(&role); err != nil {
+		t.Fatalf("load transferred role: %v", err)
+	}
+	if role != "owner" {
+		t.Fatalf("expected tenant owner role after transfer, got %s", role)
+	}
+}
+
+func TestDeleteOrganization_UsesManagementPolicy(t *testing.T) {
+	api, _, _ := setupOrganizationMembershipAPI(t)
+
+	err := api.deleteOrganization(context.Background(), &orgActor{Session: &Session{Id: "sess-admin", UserID: "user-admin"}, UserID: "user-admin"}, "org-1")
+	if !errors.Is(err, tools.ErrUnauthorized) {
+		t.Fatalf("expected admin delete org to be unauthorized, got %v", err)
+	}
+
+	err = api.deleteOrganization(context.Background(), &orgActor{Session: &Session{Id: "sess-owner", UserID: "user-owner"}, UserID: "user-owner"}, "org-1")
+	if err != nil {
+		t.Fatalf("owner delete org: %v", err)
+	}
+
+	if _, err := api.getOrganizationRecord(context.Background(), "org-1"); !errors.Is(err, tools.ErrDatabaseNotFound) {
+		t.Fatalf("expected deleted org lookup to fail, got %v", err)
 	}
 }
