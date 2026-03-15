@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,15 +40,31 @@ func TestValidateEmail(t *testing.T) {
 }
 
 func TestBuildMagicLinkURL_UsesConfigAndEscapesToken(t *testing.T) {
-	orig := config.Cfg.ApiURL
-	config.Cfg.ApiURL = " https://api.atomicbase.dev/ "
+	orig := config.Cfg.AuthMagicLinkCallbackURL
+	config.Cfg.AuthMagicLinkCallbackURL = " https://app.atomicbase.dev/auth/callback?source=email "
 	t.Cleanup(func() {
-		config.Cfg.ApiURL = orig
+		config.Cfg.AuthMagicLinkCallbackURL = orig
 	})
 
-	url := buildMagicLinkURL("a+b/c==")
-	if url != "https://api.atomicbase.dev/auth/magic-link/complete?token=a%2Bb%2Fc%3D%3D" {
+	url, err := buildMagicLinkURL("a+b/c==")
+	if err != nil {
+		t.Fatalf("build magic link url: %v", err)
+	}
+	if url != "https://app.atomicbase.dev/auth/callback?source=email&token=a%2Bb%2Fc%3D%3D" {
 		t.Fatalf("unexpected url: %s", url)
+	}
+}
+
+func TestBuildMagicLinkURL_RequiresCallbackURL(t *testing.T) {
+	orig := config.Cfg.AuthMagicLinkCallbackURL
+	config.Cfg.AuthMagicLinkCallbackURL = ""
+	t.Cleanup(func() {
+		config.Cfg.AuthMagicLinkCallbackURL = orig
+	})
+
+	_, err := buildMagicLinkURL("token")
+	if !errors.Is(err, ErrMagicLinkCallbackNotConfigured) {
+		t.Fatalf("expected ErrMagicLinkCallbackNotConfigured, got %v", err)
 	}
 }
 
@@ -143,6 +160,11 @@ func TestBeginMagicLogin_InvalidEmail(t *testing.T) {
 
 func TestBeginMagicLogin_SendsEmail(t *testing.T) {
 	db := setupAuthTestDB(t)
+	orig := config.Cfg.AuthMagicLinkCallbackURL
+	config.Cfg.AuthMagicLinkCallbackURL = "https://app.atomicbase.dev/auth/callback"
+	t.Cleanup(func() {
+		config.Cfg.AuthMagicLinkCallbackURL = orig
+	})
 	sent := outboundEmail{}
 	oldSendEmail := sendEmailFn
 	sendEmailFn = func(_ context.Context, msg outboundEmail) error {
@@ -164,6 +186,9 @@ func TestBeginMagicLogin_SendsEmail(t *testing.T) {
 	if sent.Text == "" {
 		t.Fatalf("expected email body to be set")
 	}
+	if want := "https://app.atomicbase.dev/auth/callback?token="; !strings.Contains(sent.Text, want) {
+		t.Fatalf("expected magic link callback url in email body, got %q", sent.Text)
+	}
 
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM email_magic_links WHERE email = ?`, "user@example.com").Scan(&count); err != nil {
@@ -176,6 +201,11 @@ func TestBeginMagicLogin_SendsEmail(t *testing.T) {
 
 func TestBeginMagicLogin_RollsBackWhenEmailFails(t *testing.T) {
 	db := setupAuthTestDB(t)
+	orig := config.Cfg.AuthMagicLinkCallbackURL
+	config.Cfg.AuthMagicLinkCallbackURL = "https://app.atomicbase.dev/auth/callback"
+	t.Cleanup(func() {
+		config.Cfg.AuthMagicLinkCallbackURL = orig
+	})
 	oldSendEmail := sendEmailFn
 	sendEmailFn = func(_ context.Context, msg outboundEmail) error {
 		return errors.New("smtp unavailable")
@@ -192,5 +222,19 @@ func TestBeginMagicLogin_RollsBackWhenEmailFails(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("expected failed email delivery to delete stored magic link, found %d", count)
+	}
+}
+
+func TestBeginMagicLogin_RequiresCallbackURL(t *testing.T) {
+	db := setupAuthTestDB(t)
+	orig := config.Cfg.AuthMagicLinkCallbackURL
+	config.Cfg.AuthMagicLinkCallbackURL = ""
+	t.Cleanup(func() {
+		config.Cfg.AuthMagicLinkCallbackURL = orig
+	})
+
+	err := BeginMagicLogin("user@example.com", db, context.Background())
+	if !errors.Is(err, ErrMagicLinkCallbackNotConfigured) {
+		t.Fatalf("expected ErrMagicLinkCallbackNotConfigured, got %v", err)
 	}
 }

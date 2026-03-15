@@ -72,4 +72,10 @@ async function sessionOrgFlow(email: string, magicLinkToken: string) {
   };
 }
 
-void sessionOrgFlow("joe@example.com", "paste-token-from-email-here");
+const tokenFromEmail = new URL(window.location.href).searchParams.get("token");
+
+if (!tokenFromEmail) {
+  throw new Error("Missing magic-link token");
+}
+
+void sessionOrgFlow("joe@example.com", tokenFromEmail);

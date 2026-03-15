@@ -90,8 +90,11 @@ func buildOrganizationInviteEmail(org *Organization, invite *OrganizationInvite)
 	}
 }
 
-func buildMagicLinkEmail(email, token string) outboundEmail {
-	url := buildMagicLinkURL(token)
+func buildMagicLinkEmail(email, token string) (outboundEmail, error) {
+	url, err := buildMagicLinkURL(token)
+	if err != nil {
+		return outboundEmail{}, err
+	}
 	lines := []string{
 		"Use this link to sign in to Atomicbase:",
 		"",
@@ -109,5 +112,5 @@ func buildMagicLinkEmail(email, token string) outboundEmail {
 		To:      NormalizeEmail(email),
 		Subject: "Your Atomicbase sign-in link",
 		Text:    strings.Join(lines, "\n"),
-	}
+	}, nil
 }

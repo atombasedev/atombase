@@ -126,6 +126,9 @@ Magic link:
 const auth = client.auth;
 
 await auth.startMagicLink({ email: "joe@example.com" });
+const tokenFromEmail = new URL(window.location.href).searchParams.get("token");
+if (!tokenFromEmail) throw new Error("Missing magic-link token");
+
 const completed = await auth.completeMagicLink(tokenFromEmail);
 
 if (!completed.error) {
@@ -201,6 +204,9 @@ Signed-in app flow:
 const baseClient = createClient({ url: "http://localhost:8080" });
 
 await baseClient.auth.startMagicLink({ email: "joe@example.com" });
+const tokenFromEmail = new URL(window.location.href).searchParams.get("token");
+if (!tokenFromEmail) throw new Error("Missing magic-link token");
+
 const completed = await baseClient.auth.completeMagicLink(tokenFromEmail);
 if (completed.error) throw completed.error;
 

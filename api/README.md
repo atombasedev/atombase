@@ -48,6 +48,7 @@ CGO_ENABLED=1 go test -tags fts5 ./...
 | `PORT` | `:8080` | HTTP server port |
 | `API_URL` | `http://localhost:8080` | Base API URL |
 | `APP_URL` | empty | Optional app URL included in outbound emails |
+| `AUTH_MAGIC_LINK_CALLBACK_URL` | empty | Required app callback URL that receives magic-link tokens |
 | `DB_PATH` | `atomicdata/primary.db` | Local primary database path |
 | `DATA_DIR` | `atomicdata` | Local data directory |
 | `INIT_SCHEMA` | `true` | Initialize the primary schema on startup |
@@ -138,12 +139,15 @@ Session-backed `POST /auth/orgs` is also capped by `ATOMICBASE_MAX_ORGANIZATIONS
 The intended browser-app flow is:
 
 1. start magic-link auth
-2. complete login and receive a session token
-3. persist that token client-side
-4. restore it on app boot
-5. call `/auth/me`
-6. if `databaseId` is missing, call `POST /auth/me/database`
-7. call the data API directly from the browser with that session token
+2. user clicks the emailed link to your app callback route
+3. the app callback reads the `token` query param and calls `GET /auth/magic-link/complete`
+4. persist the returned session token client-side
+5. restore it on app boot
+6. call `/auth/me`
+7. if `databaseId` is missing, call `POST /auth/me/database`
+8. call the data API directly from the browser with that session token
+
+`AUTH_MAGIC_LINK_CALLBACK_URL` is required for this flow. Atomicbase emails that exact app URL with the magic-link `token` attached as a query param. There is no fallback redirect because the callback route must perform the app-specific auth completion step.
 
 For the official browser example path, store the session token in `localStorage`, restore it on startup, and clear it on sign-out. Security comes from session auth plus definition-driven access and provisioning policies, not from proxying requests through a custom app backend.
 

@@ -134,17 +134,21 @@ await acme.from("users").delete().where(eq("id", 1));
 For browser apps, the intended path is:
 
 1. start magic-link auth
-2. complete login and store the returned session token client-side
-3. restore that token on app boot
-4. create a session-backed SDK client
-5. call `client.auth.me()`
-6. if `databaseId` is missing, self-provision with `client.auth.createDatabase({ definition })`
-7. use `client.database()` with no `Database` header to access the current user's database directly from the browser
+2. user clicks the emailed link to your app callback route
+3. app callback reads the `token` query param and calls `completeMagicLink`
+4. store the returned session token client-side
+5. restore that token on app boot
+6. create a session-backed SDK client
+7. call `client.auth.me()`
+8. if `databaseId` is missing, self-provision with `client.auth.createDatabase({ definition })`
+9. use `client.database()` with no `Database` header to access the current user's database directly from the browser
 
 ```typescript
 import { createClient } from "@atomicbase/sdk";
 
 const baseClient = createClient({ url: "http://localhost:8080" });
+const tokenFromEmail = new URL(window.location.href).searchParams.get("token");
+if (!tokenFromEmail) throw new Error("Missing magic-link token");
 
 const completed = await baseClient.auth.completeMagicLink(tokenFromEmail);
 if (completed.error) throw completed.error;

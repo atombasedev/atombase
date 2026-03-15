@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"net/url"
 	"strings"
 	"time"
@@ -22,9 +21,10 @@ ON CONFLICT(email) DO UPDATE SET
   expires_at = excluded.expires_at;`
 
 var (
-	ErrInvalidEmail              = errors.New("invalid email")
-	ErrInvalidOrExpiredMagicLink = errors.New("invalid or expired magic link")
-	ErrInvalidOrExpiredOTP       = errors.New("invalid or expired otp")
+	ErrInvalidEmail                   = errors.New("invalid email")
+	ErrInvalidOrExpiredMagicLink      = errors.New("invalid or expired magic link")
+	ErrInvalidOrExpiredOTP            = errors.New("invalid or expired otp")
+	ErrMagicLinkCallbackNotConfigured = errors.New("auth magic link callback url is not configured")
 )
 
 func BeginMagicLogin(email string, db *sql.DB, ctx context.Context) error {
@@ -35,6 +35,9 @@ func BeginMagicLogin(email string, db *sql.DB, ctx context.Context) error {
 
 	now := time.Now().UTC()
 	token := ID256()
+	if _, err := buildMagicLinkURL(token); err != nil {
+		return err
+	}
 	tokenHash := shaHash(token)
 	id := ID128()
 
@@ -44,7 +47,13 @@ func BeginMagicLogin(email string, db *sql.DB, ctx context.Context) error {
 		return err
 	}
 
-	if err := sendEmailFn(ctx, buildMagicLinkEmail(email, token)); err != nil {
+	msg, err := buildMagicLinkEmail(email, token)
+	if err != nil {
+		_, _ = db.ExecContext(ctx, `DELETE FROM email_magic_links WHERE id = ?`, id)
+		return err
+	}
+
+	if err := sendEmailFn(ctx, msg); err != nil {
 		_, _ = db.ExecContext(ctx, `DELETE FROM email_magic_links WHERE id = ?`, id)
 		return err
 	}
@@ -64,20 +73,29 @@ func ValidateEmail(email string) error {
 	return nil
 }
 
-func buildMagicLinkURL(token string) string {
-	base := strings.TrimRight(strings.TrimSpace(config.Cfg.ApiURL), "/")
-	return fmt.Sprintf("%s/auth/magic-link/complete?token=%s", base, url.QueryEscape(token))
+func buildMagicLinkURL(token string) (string, error) {
+	target := strings.TrimSpace(config.Cfg.AuthMagicLinkCallbackURL)
+	if target == "" {
+		return "", ErrMagicLinkCallbackNotConfigured
+	}
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return "", ErrMagicLinkCallbackNotConfigured
+	}
+	query := parsed.Query()
+	query.Set("token", token)
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }
 
 func CompleteMagicLink(token string, db *sql.DB, ctx context.Context) (*User, *Session, bool, error) {
-	tokenHash := shaHash(token)
 	now := time.Now().UTC().Unix()
 
 	row := db.QueryRowContext(ctx,
 		`DELETE FROM email_magic_links
 		WHERE token_hash = ? AND expires_at > ?
 		RETURNING email`,
-		tokenHash, now,
+		shaHash(token), now,
 	)
 
 	var email string
@@ -89,13 +107,10 @@ func CompleteMagicLink(token string, db *sql.DB, ctx context.Context) (*User, *S
 		return nil, nil, false, err
 	}
 
-	// Find or create user
 	user, isNew, err := FindOrCreateUser(email, db, ctx)
 	if err != nil {
 		return nil, nil, false, err
 	}
-
-	// Create and save session
 	session := CreateSession(user.ID)
 	if err := SaveSession(session, db, ctx); err != nil {
 		return nil, nil, false, err
