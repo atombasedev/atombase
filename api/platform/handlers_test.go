@@ -2,11 +2,13 @@ package platform
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/atombasedev/atombase/config"
 	"github.com/atombasedev/atombase/tools"
 )
 
@@ -153,5 +155,61 @@ func TestHandleDiffTemplate_InvalidJSON(t *testing.T) {
 	}
 	if apiErr.Code != tools.CodeInvalidJSON {
 		t.Fatalf("expected code %q, got %q", tools.CodeInvalidJSON, apiErr.Code)
+	}
+}
+
+func TestWithBody_EnforcesMaxRequestBody(t *testing.T) {
+	originalLimit := config.Cfg.MaxRequestBody
+	config.Cfg.MaxRequestBody = 8
+	defer func() {
+		config.Cfg.MaxRequestBody = originalLimit
+	}()
+
+	handler := withBody(func(w http.ResponseWriter, r *http.Request) {
+		_, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/platform/templates", strings.NewReader("123456789"))
+	rec := httptest.NewRecorder()
+
+	handler(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected status %d, got %d", http.StatusRequestEntityTooLarge, rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "request body too large") {
+		t.Fatalf("expected body too large error, got %q", rec.Body.String())
+	}
+}
+
+func TestRespondJSON(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	respondJSON(rec, http.StatusCreated, map[string]any{
+		"ok":   true,
+		"name": "template-a",
+	})
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d", http.StatusCreated, rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("expected content-type application/json, got %q", got)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	if body["ok"] != true {
+		t.Fatalf("expected ok=true, got %v", body["ok"])
+	}
+	if body["name"] != "template-a" {
+		t.Fatalf("expected name template-a, got %v", body["name"])
 	}
 }
