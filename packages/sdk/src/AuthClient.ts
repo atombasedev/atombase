@@ -1,68 +1,105 @@
 import { AtomicbaseError } from "./AtomicbaseError.js";
 import type {
   AtomicbaseResponse,
+  CreateOrganizationInviteOptions,
   CreateOrganizationMemberOptions,
+  CreateOrganizationOptions,
+  CreateUserDatabaseOptions,
+  MagicLinkCompleteResponse,
+  MagicLinkStartOptions,
+  MagicLinkStartResponse,
   Organization,
+  OrganizationInvite,
   OrganizationMember,
   TransferOrganizationOwnershipOptions,
   UpdateOrganizationMemberOptions,
   UpdateOrganizationOptions,
+  User,
 } from "./types.js";
 
-export class OrganizationAuthClient {
-  private readonly baseUrl: string;
-  private readonly apiKey?: string;
-  private readonly headers: Record<string, string>;
-  private readonly fetchFn: typeof fetch;
+type AuthMode = "none" | "sessionOrService";
 
-  constructor(options: {
-    baseUrl: string;
-    apiKey?: string;
-    headers: Record<string, string>;
-    fetch: typeof fetch;
-  }) {
+type SharedClientOptions = {
+  baseUrl: string;
+  apiKey?: string;
+  sessionToken?: string;
+  headers: Record<string, string>;
+  fetch: typeof fetch;
+};
+
+class AuthRequestClient {
+  protected readonly baseUrl: string;
+  protected readonly apiKey?: string;
+  protected readonly sessionToken?: string;
+  protected readonly headers: Record<string, string>;
+  protected readonly fetchFn: typeof fetch;
+
+  constructor(options: SharedClientOptions) {
     this.baseUrl = options.baseUrl;
     this.apiKey = options.apiKey;
+    this.sessionToken = options.sessionToken;
     this.headers = options.headers;
     this.fetchFn = options.fetch;
   }
 
-  private getHeaders(): Record<string, string> {
+  protected buildHeaders(authMode: AuthMode): Record<string, string> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       ...this.headers,
     };
 
+    if (authMode === "none") {
+      return headers;
+    }
+
+    if (this.sessionToken) {
+      headers.Authorization = `Bearer ${this.sessionToken}`;
+      return headers;
+    }
+
     if (this.apiKey) {
-      headers["Authorization"] = `Bearer service.${this.apiKey}`;
+      headers.Authorization = `Bearer service.${this.apiKey}`;
     }
 
     return headers;
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<AtomicbaseResponse<T>> {
+  protected async request<T>(method: string, path: string, body?: unknown, authMode: AuthMode = "sessionOrService"): Promise<AtomicbaseResponse<T>> {
     try {
       const response = await this.fetchFn(`${this.baseUrl}${path}`, {
         method,
-        headers: this.getHeaders(),
+        headers: this.buildHeaders(authMode),
         body: body ? JSON.stringify(body) : undefined,
       });
 
       if (!response.ok) {
         const errorBody = await response.json().catch(() => ({}));
-        const error = AtomicbaseError.fromResponse(errorBody, response.status);
-        return { data: null, error };
+        return { data: null, error: AtomicbaseError.fromResponse(errorBody, response.status) };
       }
 
       if (response.status === 204) {
         return { data: undefined as T, error: null };
       }
 
-      const data = await response.json();
-      return { data, error: null };
+      const text = await response.text();
+      return { data: (text ? JSON.parse(text) : null) as T, error: null };
     } catch (err) {
       return { data: null, error: AtomicbaseError.networkError(err) };
     }
+  }
+}
+
+export class OrganizationAuthClient extends AuthRequestClient {
+  list(): Promise<AtomicbaseResponse<Organization[]>> {
+    return this.request("GET", "/auth/orgs");
+  }
+
+  create(options: CreateOrganizationOptions): Promise<AtomicbaseResponse<Organization>> {
+    return this.request("POST", "/auth/orgs", options);
+  }
+
+  get(orgId: string): Promise<AtomicbaseResponse<Organization>> {
+    return this.request("GET", `/auth/orgs/${encodeURIComponent(orgId)}`);
   }
 
   listMembers(orgId: string): Promise<AtomicbaseResponse<OrganizationMember[]>> {
@@ -81,6 +118,22 @@ export class OrganizationAuthClient {
     return this.request("DELETE", `/auth/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(userId)}`);
   }
 
+  listInvites(orgId: string): Promise<AtomicbaseResponse<OrganizationInvite[]>> {
+    return this.request("GET", `/auth/orgs/${encodeURIComponent(orgId)}/invites`);
+  }
+
+  createInvite(orgId: string, options: CreateOrganizationInviteOptions): Promise<AtomicbaseResponse<OrganizationInvite>> {
+    return this.request("POST", `/auth/orgs/${encodeURIComponent(orgId)}/invites`, options);
+  }
+
+  deleteInvite(orgId: string, inviteId: string): Promise<AtomicbaseResponse<void>> {
+    return this.request("DELETE", `/auth/orgs/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(inviteId)}`);
+  }
+
+  acceptInvite(orgId: string, inviteId: string): Promise<AtomicbaseResponse<OrganizationMember>> {
+    return this.request("POST", `/auth/orgs/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(inviteId)}/accept`);
+  }
+
   update(orgId: string, options: UpdateOrganizationOptions): Promise<AtomicbaseResponse<Organization>> {
     return this.request("PATCH", `/auth/orgs/${encodeURIComponent(orgId)}`, options);
   }
@@ -91,5 +144,40 @@ export class OrganizationAuthClient {
 
   transferOwnership(orgId: string, options: TransferOrganizationOwnershipOptions): Promise<AtomicbaseResponse<Organization>> {
     return this.request("POST", `/auth/orgs/${encodeURIComponent(orgId)}/transfer-ownership`, options);
+  }
+}
+
+export class AuthClient extends AuthRequestClient {
+  readonly orgs: OrganizationAuthClient;
+
+  constructor(options: SharedClientOptions) {
+    super(options);
+    this.orgs = new OrganizationAuthClient(options);
+  }
+
+  startMagicLink(options: MagicLinkStartOptions): Promise<AtomicbaseResponse<MagicLinkStartResponse>> {
+    return this.request("POST", "/auth/magic-link/start", options, "none");
+  }
+
+  completeMagicLink(token: string): Promise<AtomicbaseResponse<MagicLinkCompleteResponse>> {
+    return this.request("GET", `/auth/magic-link/complete?token=${encodeURIComponent(token)}`, undefined, "none");
+  }
+
+  signOut(): Promise<AtomicbaseResponse<void>> {
+    return this.request("POST", "/auth/signout");
+  }
+
+  me(): Promise<AtomicbaseResponse<User>> {
+    return this.request("GET", "/auth/me");
+  }
+
+  createDatabase(options: CreateUserDatabaseOptions): Promise<AtomicbaseResponse<{
+    id: string;
+    definitionId: number;
+    definitionName: string;
+    definitionType: string;
+    definitionVersion: number;
+  }>> {
+    return this.request("POST", "/auth/me/database", options);
   }
 }

@@ -11,31 +11,6 @@ const skipReason = RUN_CONTRACT
   ? null
   : "Set ATOMICBASE_CONTRACT=1 to run live API/SDK contract tests";
 
-function authHeaders() {
-  const headers = { "Content-Type": "application/json" };
-  if (API_KEY) {
-    headers.Authorization = `Bearer ${API_KEY}`;
-  }
-  return headers;
-}
-
-async function apiRequest(path, { method = "GET", body } = {}) {
-  const response = await fetch(`${BASE_URL}${path}`, {
-    method,
-    headers: authHeaders(),
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`API ${method} ${path} failed (${response.status}): ${errorBody}`);
-  }
-
-  const text = await response.text();
-  if (!text) return null;
-  return JSON.parse(text);
-}
-
 async function assertHealthy() {
   const response = await fetch(`${BASE_URL}/health`);
   assert.equal(response.status, 200, "API must be reachable before running contract tests");
@@ -86,10 +61,8 @@ test("SDK <-> API contract: core tenant data flows", { skip: skipReason ?? false
   let tenantCreated = false;
 
   try {
-    await apiRequest("/platform/definitions", {
-      method: "POST",
-      body: buildDefinition(definitionName),
-    });
+    const definitionCreate = await client.definitions.create(buildDefinition(definitionName));
+    assert.equal(definitionCreate.error, null, `definition creation failed: ${definitionCreate.error?.message}`);
     definitionCreated = true;
 
     const tenantCreate = await client.databases.create({

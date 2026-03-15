@@ -1,80 +1,237 @@
-# AtomBase database definition model
+# Atomicbase Definition Model
+
+## Overview
+
+Atomicbase definitions describe:
+
+- schema
+- access policies
+- provisioning rules
+- organization membership and management rules
+
+There are three definition types:
+
+- `global`
+- `user`
+- `organization`
+
+All three share the same schema authoring model. The difference is how databases are provisioned and how auth context is applied at runtime.
 
 ## Definition types
 
-There are 3 types of database definitions. Global, org, and user. Global definitions are database definitions tied to a single global database. Org definitions are database definitions tied to organization tenants. User definitions are database definitions tied to user tenants.
+### Global
 
-## Core differences
+- Many databases can use the same global definition.
+- Data requests target them with `Database: global:<database-id>`.
+- Access policies usually reason about `auth.status` and optionally `auth.id`.
 
-There are a few core differences between the database definition types.
-1. # of databases. Global: 1. Org: many (1 per org). User: many (1 per user).
-2. Schema definitions. Actually the same across all types.
-3. Access policies. Global: RLS with auth vs anon context. Org: RLS + RBAC with roles defined per definition. User: RLS only (auth context doesn't matter because user -> db mapping is 1:1).
-4. Roles. Global: service, authenticated, anon. Org: any role. User: no roles.
+### User
 
-## Schema definitions
+- Each user can have one optional user database.
+- Browser and SDK clients access it by omitting the `Database` header and calling `client.database()`.
+- Self-service provisioning is controlled by the definition's `provision` rule.
 
-Schema definitions are already well defined in the platform package and packages/definitions.
+### Organization
 
-## Access definitions
+- Each organization has one required tenant database.
+- Data requests target it with `Database: org:<organization-id>`.
+- Membership is tenant-local, and org roles plus management rules come from the definition.
 
-Access definitions granularly define how databases can be accessed. They use a mix of RLS and RBAC. Service role connections completely bypass access definitions so they are able to run any operation on any database. Access definitions are defined per table and per operation (SELECT, UPDATE, INSERT, DELETE). The context access polices get is dependent on the operation they're performing and the type of definition. Auth context is as follows: For global databases, policies get status (authenticated, anonymous). For org databases, policies get status (member, anonymous) and role (org defined or NULL if not a member of org). For user databases, no auth context is passed. Row context is as follows: SELECT -> (old). UPDATE -> (old, new). INSERT -> (new). DELETE -> (old).
+## Schema authoring
 
-| Operation | `auth` | `old` | `new` |
-|-----------|--------|-------|-------|
-| SELECT | ✓ | ✓ | — |
-| INSERT | ✓ | — | ✓ |
-| UPDATE | ✓ | ✓ | ✓ |
-| DELETE | ✓ | ✓ | — |
+Definitions are authored with `@atomicbase/definitions`.
 
-```typescript
-access: defineAccess({
-  posts: definePolicy({
-    // Anyone can read
-    select: r.allow(),
-    // Can only insert posts where you're the author
-    insert: r.where(({ auth, new }) => eq(new.author_id, auth.id)),
-    // Can only update your own posts
-    update: r.where(({ auth, old }) => eq(old.author_id, auth.id)),
-    // Can only delete your own posts
-    delete: r.where(({ auth, old }) => eq(old.author_id, auth.id)),
+```ts
+import {
+  allow,
+  c,
+  defineAccess,
+  defineSchema,
+  defineTable,
+  defineUser,
+} from "@atomicbase/definitions";
+
+const schema = defineSchema({
+  todos: defineTable({
+    id: c.integer().primaryKey(),
+    title: c.text().notNull(),
+    completed: c.integer().notNull().default(0),
+    created_at: c.text().notNull(),
+    deleted_at: c.text(),
   }),
-}),
-```
+});
 
-## Management
-
-Management is only available for organizations as it defines what parts of the organization a role can manage.
-- Keys are role names (must match `roles` array)
-- `invite`, `assignRole`, `removeMember` — which target roles this role can manage
-  - `role.any()` — can manage all roles
-  - `[role.member, role.viewer]` — can only manage specific roles
-- `updateOrg`, `deleteOrg`, `transferOwnership` — binary permissions (`true` to allow)
-
-```typescript
-membership: defineMembership({
-  roles: ["owner"],
-  management: (role) => ({
-    owner: {
-      invite: role.any(),
-      assignRole: role.any(),
-      removeMember: role.any(),
-      updateOrg: true,
-      deleteOrg: true,
-      transferOwnership: true,
+export default defineUser({
+  schema,
+  access: defineAccess(schema, {
+    todos: {
+      select: allow(),
+      insert: allow(),
+      update: allow(),
+      delete: allow(),
     },
   }),
-})
+});
 ```
 
-## Examples
+Available schema features include:
 
-**Organization database** (`definitions/+customer.org.ts`):
-```typescript
-import { defineOrg, defineMembership, defineSchema, defineAccess, defineTable, definePolicy, c, r, eq, inList } from "@atomicbase/definitions";
+- `primaryKey`
+- `notNull`
+- `unique`
+- `default`
+- `check`
+- `generatedAs`
+- `references`
+- `index` / `uniqueIndex`
+- `fts`
+
+## Access policies
+
+Access policies are defined per table and per operation:
+
+- `select`
+- `insert`
+- `update`
+- `delete`
+
+They are authored with `defineAccess(schema, ...)`.
+
+### Policy context
+
+| Operation | `auth` | `prev` | `next` |
+| --- | --- | --- | --- |
+| `select` | yes | yes | no |
+| `insert` | yes | no | yes |
+| `update` | yes | yes | yes |
+| `delete` | yes | yes | no |
+
+Use `prev` for the existing row state and `next` for the proposed row state.
+
+```ts
+import {
+  allow,
+  and,
+  defineAccess,
+  defineSchema,
+  defineTable,
+  defineUser,
+  eq,
+  isNull,
+  c,
+} from "@atomicbase/definitions";
+
+const schema = defineSchema({
+  todos: defineTable({
+    id: c.integer().primaryKey(),
+    owner_id: c.text().notNull(),
+    title: c.text().notNull(),
+    deleted_at: c.text(),
+  }),
+});
+
+export default defineUser({
+  schema,
+  access: defineAccess(schema, {
+    todos: {
+      select: ({ auth, prev }) =>
+        and(
+          eq(prev.owner_id, auth.id),
+          isNull(prev.deleted_at),
+        ),
+      insert: ({ auth, next }) => eq(next.owner_id, auth.id),
+      update: ({ auth, prev, next }) =>
+        and(
+          eq(prev.owner_id, auth.id),
+          eq(next.owner_id, auth.id),
+        ),
+      delete: ({ auth, prev }) => eq(prev.owner_id, auth.id),
+    },
+  }),
+});
+```
+
+### Auth fields
+
+Current access authoring uses:
+
+- `auth.id`
+- `auth.status`
+- `auth.role` for organization definitions
+
+`auth.role` is only valid for organization definitions.
+
+## Provisioning rules
+
+`user` and `organization` definitions can declare a `provision` rule. `global` definitions cannot.
+
+Provisioning rules are deny-by-default for self-service flows. If `provision` is omitted, self-service provisioning is rejected.
+
+Current provisioning context supports:
+
+- `auth.status`
+- `auth.id`
+- `auth.email`
+- `auth.verified`
+
+```ts
+import {
+  defineProvision,
+  defineUser,
+  defineSchema,
+  defineTable,
+  defineAccess,
+  allow,
+  eq,
+  c,
+} from "@atomicbase/definitions";
+
+const schema = defineSchema({
+  todos: defineTable({
+    id: c.integer().primaryKey(),
+    title: c.text().notNull(),
+  }),
+});
+
+export default defineUser({
+  provision: defineProvision(({ auth }) => eq(auth.verified, true)),
+  schema,
+  access: defineAccess(schema, {
+    todos: {
+      select: allow(),
+      insert: allow(),
+      update: allow(),
+      delete: allow(),
+    },
+  }),
+});
+```
+
+## Organization membership and management
+
+Organization definitions define membership with `defineMembership({ roles, management })`.
+
+```ts
+import {
+  allow,
+  defineAccess,
+  defineMembership,
+  defineOrg,
+  defineSchema,
+  defineTable,
+  inList,
+  c,
+} from "@atomicbase/definitions";
+
+const schema = defineSchema({
+  projects: defineTable({
+    id: c.integer().primaryKey(),
+    name: c.text().notNull(),
+    created_by: c.text().notNull(),
+  }),
+});
 
 export default defineOrg({
-  maxMembers: 50,
   membership: defineMembership({
     roles: ["owner", "admin", "member", "viewer"],
     management: (role) => ({
@@ -93,69 +250,36 @@ export default defineOrg({
       },
     }),
   }),
-  schema: defineSchema({
-    projects: defineTable({
-      id: c.integer().primaryKey(),
-      name: c.text().notNull(),
-      created_by: c.text().notNull(),
-    }),
-  }),
-  access: defineAccess({
-    projects: definePolicy({
-      select: r.allow(),
-      insert: r.where(({ auth }) => inList(auth.role, ["member", "admin", "owner"])),
-      delete: r.where(({ auth }) => inList(auth.role, ["owner", "admin"])),
-    }),
+  schema,
+  access: defineAccess(schema, {
+    projects: {
+      select: allow(),
+      insert: ({ auth }) => inList(auth.role, ["member", "admin", "owner"]),
+      delete: ({ auth }) => inList(auth.role, ["admin", "owner"]),
+    },
   }),
 });
 ```
 
-**User definition** (`definitions/+notes.user.ts`):
-```typescript
-import { defineUser, defineSchema, defineAccess, defineTable, definePolicy, c, r } from "@atomicbase/definitions";
+Management controls:
 
-export default defineUser({
-  schema: defineSchema({
-    notes: defineTable({
-      id: c.integer().primaryKey(),
-      content: c.text().notNull(),
-      created_at: c.text().notNull(),
-    }),
-  }),
-  access: defineAccess({
-    notes: definePolicy({
-      select: r.allow(),
-      insert: r.allow(),
-      update: r.allow(),
-      delete: r.allow(),
-    }),
-  }),
-});
-```
+- `invite`
+- `assignRole`
+- `removeMember`
+- `updateOrg`
+- `deleteOrg`
+- `transferOwnership`
 
-**Global definition** (`definitions/+marketplace.global.ts`):
-```typescript
-import { defineGlobal, defineSchema, defineAccess, defineTable, definePolicy, c, r, eq } from "@atomicbase/definitions";
+## Browser app path
 
-export default defineGlobal({
-  schema: defineSchema({
-    extensions: defineTable({
-      id: c.integer().primaryKey(),
-      author_id: c.text().notNull(),
-      name: c.text().notNull(),
-    }),
-  }),
-  access: defineAccess({
-    extensions: definePolicy({
-      select: r.allow(),
-      insert: r.where(({ auth, new }) => eq(new.author_id, auth.id)),
-      update: r.where(({ auth, old }) => eq(old.author_id, auth.id)),
-      delete: r.where(({ auth, old }) => eq(old.author_id, auth.id)),
-    }),
-  }),
-});
-```
+The intended browser-app flow for a user definition is:
 
-## Storage
+1. complete magic-link auth
+2. store the returned session token in `localStorage`
+3. restore that token on app boot
+4. create a session-scoped SDK client
+5. call `client.auth.me()`
+6. self-provision with `client.auth.createDatabase({ definition })` if the user has no database yet
+7. query with `client.database()` directly from the browser
 
-All data for global and user database definitions is stored in the primary database and heavily cached. For org databases, membership is stored in the tenant database. This is because membership 
+That is the main Atomicbase BaaS path. Security comes from session auth plus definition-driven access and provisioning policies, not from hiding the API behind a custom app backend.

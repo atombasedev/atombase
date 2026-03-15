@@ -4,7 +4,8 @@
 
 export { AtomicbaseClient, DatabaseClient, createClient } from "./AtomicbaseClient.js";
 export { DatabasesClient } from "./DatabasesClient.js";
-export { OrganizationAuthClient } from "./AuthClient.js";
+export { DefinitionsClient } from "./DefinitionsClient.js";
+export { AuthClient, OrganizationAuthClient } from "./AuthClient.js";
 
 // =============================================================================
 // Builders (for advanced usage / extension)
@@ -69,6 +70,23 @@ export type {
   AtomicbaseBatchResponse,
   // Configuration
   AtomicbaseClientOptions,
+  DefinitionType,
+  GeneratedColumn,
+  ColumnDefinition,
+  IndexDefinition,
+  TableDefinition,
+  SchemaDefinition,
+  Condition,
+  OperationPolicy,
+  AccessDefinition,
+  ManagementPermission,
+  ManagementPolicy,
+  ManagementDefinition,
+  Definition,
+  DefinitionVersion,
+  Merge,
+  CreateDefinitionOptions,
+  PushDefinitionOptions,
   // Query types
   FilterCondition,
   SelectColumn,
@@ -78,7 +96,15 @@ export type {
   // Database types (Platform API)
   Database,
   CreateDatabaseOptions,
+  User,
+  MagicLinkStartOptions,
+  MagicLinkStartResponse,
+  MagicLinkCompleteResponse,
+  CreateUserDatabaseOptions,
   Organization,
+  CreateOrganizationOptions,
+  OrganizationInvite,
+  CreateOrganizationInviteOptions,
   OrganizationMember,
   CreateOrganizationMemberOptions,
   UpdateOrganizationMemberOptions,

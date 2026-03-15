@@ -36,6 +36,7 @@ export interface BuilderConfig {
   table: string;
   baseUrl: string;
   apiKey?: string;
+  sessionToken?: string;
   database?: string;
   fetch: typeof fetch;
   headers?: Record<string, string>;
@@ -49,6 +50,7 @@ export abstract class AtomicbaseBuilder<T> implements PromiseLike<AtomicbaseResp
   protected state: QueryState;
   protected readonly baseUrl: string;
   protected readonly apiKey?: string;
+  protected readonly sessionToken?: string;
   protected readonly database?: string;
   protected readonly fetchFn: typeof fetch;
   protected readonly defaultHeaders: Record<string, string>;
@@ -73,6 +75,7 @@ export abstract class AtomicbaseBuilder<T> implements PromiseLike<AtomicbaseResp
     };
     this.baseUrl = config.baseUrl;
     this.apiKey = config.apiKey;
+    this.sessionToken = config.sessionToken;
     this.database = config.database;
     this.fetchFn = config.fetch;
     this.defaultHeaders = config.headers ?? {};
@@ -373,7 +376,9 @@ export abstract class AtomicbaseBuilder<T> implements PromiseLike<AtomicbaseResp
       ...this.defaultHeaders,
     };
 
-    if (this.apiKey) {
+    if (this.sessionToken) {
+      headers["Authorization"] = `Bearer ${this.sessionToken}`;
+    } else if (this.apiKey) {
       headers["Authorization"] = `Bearer service.${this.apiKey}`;
     }
 

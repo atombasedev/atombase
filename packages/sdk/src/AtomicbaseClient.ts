@@ -1,13 +1,15 @@
 import { AtomicbaseQueryBuilder } from "./AtomicbaseQueryBuilder.js";
 import { AtomicbaseBuilder } from "./AtomicbaseBuilder.js";
 import { AtomicbaseError } from "./AtomicbaseError.js";
-import { OrganizationAuthClient } from "./AuthClient.js";
+import { AuthClient, OrganizationAuthClient } from "./AuthClient.js";
 import { DatabasesClient } from "./DatabasesClient.js";
+import { DefinitionsClient } from "./DefinitionsClient.js";
 import type { AtomicbaseClientOptions, AtomicbaseBatchResponse } from "./types.js";
 
 /**
  * Database-scoped client for operations.
- * Created by calling `client.database('global:db-id')` or another routed database target.
+ * Created by calling `client.database()` for the caller's own user database,
+ * or `client.database('global:db-id')` / `client.database('org:org-id')` for explicit routing.
  *
  * @example
  * ```ts
@@ -29,13 +31,15 @@ import type { AtomicbaseClientOptions, AtomicbaseBatchResponse } from "./types.j
 export class DatabaseClient {
   readonly baseUrl: string;
   readonly apiKey?: string;
+  readonly sessionToken?: string;
   readonly headers: Record<string, string>;
-  readonly databaseId: string;
+  readonly databaseId?: string;
   private readonly fetchFn: typeof fetch;
 
-  constructor(options: AtomicbaseClientOptions & { databaseId: string }) {
+  constructor(options: AtomicbaseClientOptions & { databaseId?: string }) {
     this.baseUrl = options.url.replace(/\/$/, "");
     this.apiKey = options.apiKey;
+    this.sessionToken = options.sessionToken;
     this.headers = options.headers ?? {};
     this.databaseId = options.databaseId;
     this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis);
@@ -54,10 +58,11 @@ export class DatabaseClient {
       table,
       baseUrl: this.baseUrl,
       apiKey: this.apiKey,
+      sessionToken: this.sessionToken,
       fetch: this.fetchFn,
       headers: {
         ...this.headers,
-        Database: this.databaseId,
+        ...(this.databaseId ? { Database: this.databaseId } : {}),
       },
     });
   }
@@ -83,10 +88,12 @@ export class DatabaseClient {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       ...this.headers,
-      Database: this.databaseId,
+      ...(this.databaseId ? { Database: this.databaseId } : {}),
     };
 
-    if (this.apiKey) {
+    if (this.sessionToken) {
+      headers["Authorization"] = `Bearer ${this.sessionToken}`;
+    } else if (this.apiKey) {
       headers["Authorization"] = `Bearer service.${this.apiKey}`;
     }
 
@@ -152,7 +159,8 @@ export class DatabaseClient {
 /**
  * Atomicbase client for multi-database operations.
  * Use `.database()` to get a database-scoped client for querying.
- * Use `.databases` to manage databases and `.orgs` for organization auth actions.
+ * Use `.definitions` and `.databases` for service-key platform actions.
+ * Use `.auth` and `.orgs` for auth/session-backed actions.
  *
  * @example
  * ```ts
@@ -183,6 +191,7 @@ export class DatabaseClient {
 export class AtomicbaseClient {
   readonly baseUrl: string;
   readonly apiKey?: string;
+  readonly sessionToken?: string;
   readonly headers: Record<string, string>;
   private readonly fetchFn: typeof fetch;
 
@@ -208,14 +217,18 @@ export class AtomicbaseClient {
    * ```
    */
   readonly databases: DatabasesClient;
+  readonly definitions: DefinitionsClient;
+  readonly auth: AuthClient;
   /**
    * Client for organization membership and org management auth routes.
+   * Retained as a convenience alias for `client.auth.orgs`.
    */
   readonly orgs: OrganizationAuthClient;
 
   constructor(options: AtomicbaseClientOptions) {
     this.baseUrl = options.url.replace(/\/$/, "");
     this.apiKey = options.apiKey;
+    this.sessionToken = options.sessionToken;
     this.headers = options.headers ?? {};
     this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis);
 
@@ -226,12 +239,20 @@ export class AtomicbaseClient {
       headers: this.headers,
       fetch: this.fetchFn,
     });
-    this.orgs = new OrganizationAuthClient({
+    this.definitions = new DefinitionsClient({
       baseUrl: this.baseUrl,
       apiKey: this.apiKey,
       headers: this.headers,
       fetch: this.fetchFn,
     });
+    this.auth = new AuthClient({
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      sessionToken: this.sessionToken,
+      headers: this.headers,
+      fetch: this.fetchFn,
+    });
+    this.orgs = this.auth.orgs;
   }
 
   /**
@@ -243,13 +264,24 @@ export class AtomicbaseClient {
    * const { data } = await databaseClient.from('users').select()
    * ```
    */
-  database(databaseTarget: string): DatabaseClient {
+  database(databaseTarget?: string): DatabaseClient {
     return new DatabaseClient({
       url: this.baseUrl,
       apiKey: this.apiKey,
+      sessionToken: this.sessionToken,
       fetch: this.fetchFn,
       headers: this.headers,
       databaseId: databaseTarget,
+    });
+  }
+
+  withSession(sessionToken: string): AtomicbaseClient {
+    return new AtomicbaseClient({
+      url: this.baseUrl,
+      apiKey: this.apiKey,
+      sessionToken,
+      fetch: this.fetchFn,
+      headers: this.headers,
     });
   }
 }

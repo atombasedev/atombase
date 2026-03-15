@@ -1,5 +1,8 @@
 # Implementing the Unified Tenant Model
 
+> [!CAUTION]
+> Historical implementation notes. This document contains older naming and example APIs in places. Use `docs/definition-model.md` and the current code as the source of truth for the active SDK and definition surface.
+
 This document describes the implementation pattern for enforcing the unified tenant model's access control at the API layer.
 
 ## Overview

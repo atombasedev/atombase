@@ -1,11 +1,14 @@
 # Atomicbase Authentication Overview
 
+> [!CAUTION]
+> Historical design overview. This document predates the current definitions-first SDK surface in places. For current definition authoring and browser auth flow, use `docs/definition-model.md`, `api/README.md`, and `packages/sdk/README.md`.
+
 This is an early overview of authentication in AtomicBase.
 The plan for authentication is production-ready before we think about being enterprise-ready. That means no SSO, Phone-based MFA, Anonymous sign-ins, email OTP (magic link only), SOC2, HIPPA, or passkeys.
 
 ## 1. Structure
 
-There are 3 core objects in AtomicBase. Users, databases, and organizations. Databases and organizations adhere to strict structures and policies defined in code through templates. This allows everything to stay in sync easily within complex multi-tenant systems and allows us to define granular access.
+There are 3 core objects in AtomicBase. Users, databases, and organizations. Databases and organizations adhere to strict structures and policies defined in code through definitions. This allows everything to stay in sync easily within complex multi-tenant systems and allows us to define granular access.
 
 ### Organizations
 
@@ -45,7 +48,7 @@ AtomicBase provides only TOTP-based MFA.
 
 ## 3. Authorization
 
-Authorization is done through template-level security policies. These policies define how data can be accessed for a specific database template.
+Authorization is done through definition-level security policies. These policies define how data can be accessed for a specific database definition.
 
 Grants authorization example:
 

@@ -1,80 +1,46 @@
-# React Todo Example
+# React Todo Example (Legacy)
 
-A Next.js todo application demonstrating Atomicbase with:
-- Google OAuth authentication (Lucia pattern with Arctic + @oslojs)
-- Database-per-user architecture
-- shadcn/ui components
+This example is a legacy reference app.
 
-## Prerequisites
+It demonstrates an older Atomicbase path:
 
-1. Atomicbase API server running
-2. Google OAuth credentials from [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+- Google OAuth in the app
+- server-managed auth/session handling
+- template-era provisioning and schema flow
+- a pre-definitions browser architecture
 
-## Setup
+It is **not** the intended product direction anymore.
 
-1. Copy the environment variables:
-   ```bash
-   cp .env.local.example .env.local
-   ```
+## Status
 
-2. Configure your `.env.local`:
-   ```
-   ATOMICBASE_URL=http://localhost:8080
-   ATOMICBASE_API_KEY=your-api-key
-   GOOGLE_CLIENT_ID=your-client-id
-   GOOGLE_CLIENT_SECRET=your-client-secret
-   NEXT_PUBLIC_APP_URL=http://localhost:3000
-   ```
+Use this example only as historical reference while the new definitions-first browser todo app is being built.
 
-3. Push the schemas to Atomicbase:
-   ```bash
-   npx atomicbase templates push
-   ```
+The intended official path for new apps is:
 
-4. Create the "primary" database for auth data:
-   ```bash
-   curl -X POST http://localhost:8080/platform/databases \
-     -H "Content-Type: application/json" \
-     -H "Authorization: Bearer your-api-key" \
-     -d '{"name": "primary", "template": "primary"}'
-   ```
+- built-in Atomicbase magic-link auth
+- session token stored client-side in the browser
+- direct browser SDK calls to the Atomicbase API
+- user self-provisioning through `POST /auth/me/database`
+- `client.database()` for the signed-in user's own database
+- definitions, access policies, provisioning rules, and managed migrations
 
-5. Start the development server:
-   ```bash
-   pnpm dev
-   ```
+## Why this example is legacy
 
-6. Open http://localhost:3000
+This app still depends on:
 
-## Architecture
+- Google OAuth credentials
+- app-owned auth orchestration
+- `schemas/` instead of `definitions/`
+- template-era provisioning assumptions
 
-### Database Model
+That makes it a poor fit for demonstrating the current Atomicbase BaaS model.
 
-- **Primary database** (`primary` database): Stores users and sessions for authentication
-- **User databases** (`user-{googleId}`): Each user gets their own database for todos
+## If you still want to run it
 
-### Schema Templates
+You will need:
 
-**Primary** (`schemas/primary.ts`):
-- `users` - User accounts linked to Google OAuth
-- `sessions` - Session tokens with expiration
+1. Atomicbase API running
+2. Google OAuth credentials
+3. The older template-era setup this example was written for
 
-**Todos** (`schemas/todos.schema.ts`):
-- `todos` - User's todo items
-
-### Auth Flow
-
-1. User clicks "Sign in with Google"
-2. Redirected to Google OAuth consent screen
-3. On callback, user is created (if new) along with their database
-4. Session token is hashed (SHA-256) and stored, cookie set
-5. User redirected to dashboard
-
-## Tech Stack
-
-- Next.js 16 (App Router)
-- Tailwind CSS 4
-- shadcn/ui components
-- Atomicbase SDK
-- Arctic (OAuth)
-- @oslojs/crypto (session hashing)
+Expect the README, code, and current backend product direction to diverge.

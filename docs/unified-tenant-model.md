@@ -1,5 +1,8 @@
 # Unified Tenant Model Architecture
 
+> [!CAUTION]
+> Historical design document. Some SDK examples and package names in this file predate the current definitions-first surface. Treat it as architecture background, not as the primary implementation guide.
+
 ## Summary
 
 Replace the current Template/Database model with a unified Definition/Database model where `definition_type` determines ownership and access patterns.

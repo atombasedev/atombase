@@ -52,8 +52,10 @@ export interface AtomicbaseResponseWithCount<T> {
 export interface AtomicbaseClientOptions {
   /** Base URL of the Atomicbase API */
   url: string;
-  /** API key for authentication */
+  /** Service API key for platform/admin requests */
   apiKey?: string;
+  /** Session token for user-scoped auth and data requests */
+  sessionToken?: string;
   /** Custom fetch implementation */
   fetch?: typeof fetch;
   /** Default headers to include in all requests */
@@ -124,6 +126,133 @@ export type AtomicbaseBatchResponse<T extends unknown[] = unknown[]> =
   | { data: null; error: AtomicbaseError };
 
 // =============================================================================
+// Definitions Types (Platform API)
+// =============================================================================
+
+export type DefinitionType = "global" | "user" | "organization";
+
+export interface GeneratedColumn {
+  expr: string;
+  stored?: boolean;
+}
+
+export interface ColumnDefinition {
+  name: string;
+  type: "INTEGER" | "TEXT" | "REAL" | "BLOB";
+  notNull?: boolean;
+  unique?: boolean;
+  default?: string | number | null | { sql: string };
+  collate?: "BINARY" | "NOCASE" | "RTRIM";
+  check?: string;
+  generated?: GeneratedColumn;
+  references?: string;
+  onDelete?: "CASCADE" | "SET NULL" | "RESTRICT" | "NO ACTION";
+  onUpdate?: "CASCADE" | "SET NULL" | "RESTRICT" | "NO ACTION";
+}
+
+export interface IndexDefinition {
+  name: string;
+  columns: string[];
+  unique?: boolean;
+}
+
+export interface TableDefinition {
+  name: string;
+  pk: string[];
+  columns: Record<string, ColumnDefinition>;
+  indexes?: IndexDefinition[];
+  ftsColumns?: string[];
+}
+
+export interface SchemaDefinition {
+  name?: string;
+  tables: TableDefinition[];
+}
+
+export interface Condition<FieldPath extends string = string> {
+  field?: FieldPath;
+  op?: string;
+  value?: unknown;
+  and?: Condition<FieldPath>[];
+  or?: Condition<FieldPath>[];
+  not?: Condition<FieldPath>;
+}
+
+export interface OperationPolicy<FieldPath extends string = string> {
+  select?: Condition<FieldPath>;
+  insert?: Condition<FieldPath>;
+  update?: Condition<FieldPath>;
+  delete?: Condition<FieldPath>;
+}
+
+export type AccessDefinition<
+  TableName extends string = string,
+  FieldPath extends string = string,
+> = Partial<Record<TableName, OperationPolicy<FieldPath>>>;
+
+export type ManagementPermission =
+  | boolean
+  | string[]
+  | { any: true };
+
+export interface ManagementPolicy {
+  invite?: ManagementPermission;
+  assignRole?: ManagementPermission;
+  removeMember?: ManagementPermission;
+  updateOrg?: boolean;
+  deleteOrg?: boolean;
+  transferOwnership?: boolean;
+}
+
+export type ManagementDefinition<RoleName extends string = string> = Partial<Record<RoleName, ManagementPolicy>>;
+
+export interface Definition {
+  id: number;
+  name: string;
+  type: DefinitionType;
+  roles?: string[];
+  management?: ManagementDefinition;
+  provision?: Condition;
+  currentVersion: number;
+  createdAt: string;
+  updatedAt: string;
+  schema?: SchemaDefinition;
+}
+
+export interface DefinitionVersion {
+  id: number;
+  definitionId: number;
+  version: number;
+  schema: SchemaDefinition;
+  provision?: Condition;
+  checksum: string;
+  createdAt: string;
+}
+
+export interface Merge {
+  old: number;
+  new: number;
+}
+
+export interface CreateDefinitionOptions {
+  name: string;
+  type: DefinitionType;
+  roles?: string[];
+  management?: ManagementDefinition;
+  provision?: Condition;
+  schema: SchemaDefinition;
+  access: AccessDefinition;
+}
+
+export interface PushDefinitionOptions {
+  schema: SchemaDefinition;
+  access: AccessDefinition;
+  management?: ManagementDefinition;
+  provision?: Condition;
+  merge?: Merge[];
+}
+
+// =============================================================================
 // Database Types (Platform API)
 // =============================================================================
 
@@ -153,10 +282,37 @@ export interface CreateDatabaseOptions {
   /** Name of the definition to use for the database schema */
   definition: string;
   userId?: string;
-  organizationId?: string;
-  organizationName?: string;
-  ownerId?: string;
-  maxMembers?: number;
+}
+
+// =============================================================================
+// Auth Types
+// =============================================================================
+
+export interface User {
+  id: string;
+  databaseId?: string;
+  email: string;
+  email_verified_at?: string;
+  created_at: string;
+}
+
+export interface MagicLinkStartOptions {
+  email: string;
+}
+
+export interface MagicLinkStartResponse {
+  message: string;
+}
+
+export interface MagicLinkCompleteResponse {
+  user: User;
+  token: string;
+  expires_at: string;
+  is_new: boolean;
+}
+
+export interface CreateUserDatabaseOptions {
+  definition: string;
 }
 
 export interface OrganizationMember {
@@ -174,6 +330,31 @@ export interface Organization {
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CreateOrganizationOptions {
+  id: string;
+  name: string;
+  definition: string;
+  ownerId?: string;
+  maxMembers?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OrganizationInvite {
+  id: string;
+  email: string;
+  role: string;
+  invitedBy: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface CreateOrganizationInviteOptions {
+  id?: string;
+  email: string;
+  role: string;
+  expiresAt?: string;
 }
 
 export interface CreateOrganizationMemberOptions {

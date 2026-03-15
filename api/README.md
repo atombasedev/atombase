@@ -133,6 +133,20 @@ User database provisioning is session-backed through `POST /auth/me/database`. T
 
 Session-backed `POST /auth/orgs` is also capped by `ATOMICBASE_MAX_ORGANIZATIONS_PER_USER`. Service auth bypasses that quota.
 
+### Browser app pattern
+
+The intended browser-app flow is:
+
+1. start magic-link auth
+2. complete login and receive a session token
+3. persist that token client-side
+4. restore it on app boot
+5. call `/auth/me`
+6. if `databaseId` is missing, call `POST /auth/me/database`
+7. call the data API directly from the browser with that session token
+
+For the official browser example path, store the session token in `localStorage`, restore it on startup, and clear it on sign-out. Security comes from session auth plus definition-driven access and provisioning policies, not from proxying requests through a custom app backend.
+
 ## Database Targeting
 
 Data requests support these routing modes:

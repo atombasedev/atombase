@@ -15,8 +15,8 @@ AtomBase helps you run one database per tenant while still feeling like you are 
 - **Databases Everywhere**: spin up a database per tenant in seconds.
 - **Definitions**: define schemas and access patterns in code.
 - **Data APIs**: query tenant databases securely over HTTP.
-- **Templates**: keep tenant schemas in sync through managed migrations.
-- **Authentication**: in progress.
+- **Managed Migrations**: keep tenant schemas in sync through definition versions.
+- **Authentication**: built-in magic-link auth and session-backed browser access.
 - **Storage**: coming soon.
 - **AI**: coming soon.
 
@@ -27,10 +27,9 @@ AtomBase helps you run one database per tenant while still feeling like you are 
 | Data API         | Alpha        |
 | TypeScript SDK   | Alpha        |
 | Platform API     | Experimental |
-| Schema Templates | Experimental |
-| Template Package | Alpha        |
+| Definitions      | Experimental |
 | CLI              | Alpha        |
-| Authentication   | In progress  |
+| Authentication   | Alpha        |
 | AI               | In progress  |
 | File Storage     | Planned      |
 | Realtime         | Planned      |
@@ -62,7 +61,7 @@ make run
 
 By default the server runs at `http://localhost:8080`.
 
-### 3) Install SDK and template package
+### 3) Install the SDK and definitions package
 
 ```bash
 npm install @atomicbase/sdk @atomicbase/definitions
@@ -77,23 +76,25 @@ npx atomicbase init
 ### 5) Define and push a definition
 
 ```typescript
-import { defineGlobal, defineSchema, defineAccess, definePolicy, defineTable, c, r } from "@atomicbase/definitions";
+import { defineGlobal, defineSchema, defineAccess, defineTable, c, allow } from "@atomicbase/definitions";
+
+const schema = defineSchema({
+  users: defineTable({
+    id: c.integer().primaryKey(),
+    name: c.text().notNull(),
+    email: c.text().notNull().unique(),
+  }),
+});
 
 export default defineGlobal({
-  schema: defineSchema({
-    users: defineTable({
-      id: c.integer().primaryKey(),
-      name: c.text().notNull(),
-      email: c.text().notNull().unique(),
-    }),
-  }),
-  access: defineAccess({
-    users: definePolicy({
-      select: r.allow(),
-      insert: r.allow(),
-      update: r.allow(),
-      delete: r.allow(),
-    }),
+  schema,
+  access: defineAccess(schema, {
+    users: {
+      select: allow(),
+      insert: allow(),
+      update: allow(),
+      delete: allow(),
+    },
   }),
 });
 ```
@@ -120,7 +121,7 @@ await client.databases.create({ id: "acme-corp", definition: "my-app" });
 ```typescript
 import { eq } from "@atomicbase/sdk";
 
-const acme = client.database("acme-corp");
+const acme = client.database("global:acme-corp");
 
 await acme.from("users").insert({ name: "Alice", email: "alice@example.com" });
 const { data } = await acme.from("users").select();
@@ -128,10 +129,44 @@ await acme.from("users").update({ name: "Alicia" }).where(eq("id", 1));
 await acme.from("users").delete().where(eq("id", 1));
 ```
 
+### 8) Browser auth and user databases
+
+For browser apps, the intended path is:
+
+1. start magic-link auth
+2. complete login and store the returned session token client-side
+3. restore that token on app boot
+4. create a session-backed SDK client
+5. call `client.auth.me()`
+6. if `databaseId` is missing, self-provision with `client.auth.createDatabase({ definition })`
+7. use `client.database()` with no `Database` header to access the current user's database directly from the browser
+
+```typescript
+import { createClient } from "@atomicbase/sdk";
+
+const baseClient = createClient({ url: "http://localhost:8080" });
+
+const completed = await baseClient.auth.completeMagicLink(tokenFromEmail);
+if (completed.error) throw completed.error;
+
+localStorage.setItem("atombase.session", completed.data.token);
+
+const client = baseClient.withSession(completed.data.token);
+const me = await client.auth.me();
+if (me.error) throw me.error;
+
+if (!me.data.databaseId) {
+  const provisioned = await client.auth.createDatabase({ definition: "todo-app" });
+  if (provisioned.error) throw provisioned.error;
+}
+
+const todoDb = client.database();
+```
+
 ## Key Ideas
 
 - **Tenant isolation by default**: each tenant gets its own database.
-- **Templates keep systems aligned**: define once, roll forward with migrations.
+- **Definitions keep systems aligned**: define once, roll forward with migrations.
 - **Strict versions + lazy sync**: out-of-date tenant databases are synchronized when accessed.
 - **Simple operational model**: single Go service with a focused API surface.
 
@@ -144,7 +179,7 @@ await acme.from("users").delete().where(eq("id", 1));
 
 ## Examples
 
-- [react-todo](./examples/react-todo) - Next.js todo app with a database-per-user architecture
+- [react-todo](./examples/react-todo) - legacy Next.js todo example using Google OAuth and the old template-era model
 
 ## Contributing
 
