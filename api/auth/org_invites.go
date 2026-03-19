@@ -188,45 +188,47 @@ func (api *API) createOrganizationInvite(ctx context.Context, actor *orgActor, o
 		invitedBy = actor.UserID
 	}
 
-	var row *sql.Row
-	if actor.IsService {
-		row = db.QueryRowContext(ctx, `
-			INSERT INTO atombase_invites (id, email, role, invited_by, expires_at)
-			VALUES (?, ?, ?, ?, ?)
-			RETURNING id, email, role, invited_by, expires_at, created_at
-		`, req.ID, req.Email, req.Role, invitedBy, req.ExpiresAt)
-	} else {
-		row = db.QueryRowContext(ctx, `
-			INSERT INTO atombase_invites (id, email, role, invited_by, expires_at)
-			SELECT ?, ?, ?, ?, ?
-			WHERE EXISTS (
-				SELECT 1
-				FROM atombase_membership actor
-				WHERE actor.user_id = ?
-				  AND actor.status = 'active'
-			)
-			RETURNING id, email, role, invited_by, expires_at, created_at
-		`, req.ID, req.Email, req.Role, invitedBy, req.ExpiresAt, actor.UserID)
+	org, err := api.getOrganizationRecord(ctx, organizationID)
+	if err != nil {
+		return nil, err
 	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	row := tx.QueryRowContext(ctx, `
+		INSERT INTO atombase_invites (id, email, role, invited_by, expires_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(email) DO UPDATE SET
+			id = excluded.id,
+			role = excluded.role,
+			invited_by = excluded.invited_by,
+			expires_at = excluded.expires_at,
+			created_at = CURRENT_TIMESTAMP
+		RETURNING id, email, role, invited_by, expires_at, created_at
+	`, req.ID, req.Email, req.Role, invitedBy, req.ExpiresAt)
 
 	var invite OrganizationInvite
 	if err := row.Scan(&invite.ID, &invite.Email, &invite.Role, &invite.InvitedBy, &invite.ExpiresAt, &invite.CreatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, tools.UnauthorizedErr("organization invite creation is not allowed")
 		}
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return nil, tools.InvalidRequestErr("invite already exists for email")
-		}
 		return nil, err
 	}
 
-	org, err := api.getOrganizationRecord(ctx, organizationID)
+	msg, err := buildOrganizationInviteEmail(org, &invite)
 	if err != nil {
-		_, _ = db.ExecContext(ctx, `DELETE FROM atombase_invites WHERE id = ?`, invite.ID)
 		return nil, err
 	}
-	if err := sendEmailFn(ctx, buildOrganizationInviteEmail(org, &invite)); err != nil {
-		_, _ = db.ExecContext(ctx, `DELETE FROM atombase_invites WHERE id = ?`, invite.ID)
+	if err := sendEmailFn(ctx, msg); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return &invite, nil

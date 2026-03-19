@@ -14,6 +14,7 @@ type Config struct {
 	ApiURL                   string
 	AppURL                   string   // Base app URL for user-facing links (optional)
 	AuthMagicLinkCallbackURL string   // Required app callback URL that receives magic link tokens
+	AuthInviteCallbackURL    string   // Required app callback URL that receives org invite links
 	Port                     string   // HTTP server port (e.g., ":8080")
 	PrimaryDBName            string   // Turso database name for external primary DB (empty = use local SQLite)
 	PrimaryDBPath            string   // Path to local SQLite database file (fallback when PrimaryDBName is empty)
@@ -123,6 +124,7 @@ func Load() Config {
 		ApiURL:                   getEnv("API_URL", "http://localhost:8080"),
 		AppURL:                   strings.TrimSpace(os.Getenv("APP_URL")),
 		AuthMagicLinkCallbackURL: strings.TrimSpace(os.Getenv("AUTH_MAGIC_LINK_CALLBACK_URL")),
+		AuthInviteCallbackURL:    strings.TrimSpace(os.Getenv("AUTH_INVITE_CALLBACK_URL")),
 		Port:                     getEnv("PORT", ":8080"),
 		PrimaryDBName:            os.Getenv("PRIMARY_DB_NAME"),
 		PrimaryDBPath:            getEnv("DB_PATH", "atomicdata/primary.db"),

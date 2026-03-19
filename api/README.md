@@ -49,6 +49,7 @@ CGO_ENABLED=1 go test -tags fts5 ./...
 | `API_URL` | `http://localhost:8080` | Base API URL |
 | `APP_URL` | empty | Optional app URL included in outbound emails |
 | `AUTH_MAGIC_LINK_CALLBACK_URL` | empty | Required app callback URL that receives magic-link tokens |
+| `AUTH_INVITE_CALLBACK_URL` | empty | Required app callback URL that receives organization invite links |
 | `DB_PATH` | `atomicdata/primary.db` | Local primary database path |
 | `DATA_DIR` | `atomicdata` | Local data directory |
 | `INIT_SCHEMA` | `true` | Initialize the primary schema on startup |
@@ -128,7 +129,7 @@ Auth routes accept:
 
 For session-backed callers, organization existence is only confirmed to members of that organization. Non-members get the same authorization failure for both missing and real organizations. Service auth can manage organizations directly.
 
-Organization invite creation sends an email to the invited address. If SMTP is not configured, the backend logs the email payload to stdout so local development can still exercise the flow.
+Organization invite creation sends an email to the invited address using `AUTH_INVITE_CALLBACK_URL` as the app link target. If SMTP is not configured, the backend logs the email payload to stdout so local development can still exercise the flow.
 
 User database provisioning is session-backed through `POST /auth/me/database`. That route creates the caller's one allowed user database from a user definition and updates `/auth/me` to include `databaseId`.
 

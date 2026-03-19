@@ -95,12 +95,12 @@ func (api *API) handleGetOrganization(w http.ResponseWriter, r *http.Request) {
 		tools.RespErr(w, tools.InvalidRequestErr("organization id is required"))
 		return
 	}
-	org, err := api.getOrganization(r.Context(), actor, orgID)
+	orgCtx, err := api.getOrganizationContext(r.Context(), actor, orgID)
 	if err != nil {
 		tools.RespErr(w, err)
 		return
 	}
-	tools.RespondJSON(w, http.StatusOK, org)
+	tools.RespondJSON(w, http.StatusOK, orgCtx)
 }
 
 func (api *API) handleUpdateOrganization(w http.ResponseWriter, r *http.Request) {

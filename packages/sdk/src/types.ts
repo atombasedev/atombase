@@ -317,6 +317,7 @@ export interface CreateUserDatabaseOptions {
 
 export interface OrganizationMember {
   userId: string;
+  email: string;
   role: string;
   status: string;
   createdAt: string;
@@ -348,6 +349,13 @@ export interface OrganizationInvite {
   invitedBy: string;
   expiresAt: string;
   createdAt: string;
+}
+
+export interface OrganizationContext {
+  organization: Organization;
+  member?: OrganizationMember;
+  members: OrganizationMember[];
+  invites: OrganizationInvite[];
 }
 
 export interface CreateOrganizationInviteOptions {

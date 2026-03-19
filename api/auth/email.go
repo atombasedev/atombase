@@ -2,8 +2,10 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/smtp"
+	"net/url"
 	"strings"
 
 	"github.com/atombasedev/atombase/config"
@@ -16,6 +18,22 @@ type outboundEmail struct {
 }
 
 var sendEmailFn = sendEmail
+
+func buildOrganizationInviteURL(orgID, inviteID string) (string, error) {
+	target := strings.TrimSpace(config.Cfg.AuthInviteCallbackURL)
+	if target == "" {
+		return "", errors.New("auth invite callback url is not configured")
+	}
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return "", err
+	}
+	query := parsed.Query()
+	query.Set("org", orgID)
+	query.Set("invite", inviteID)
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
 
 func sendEmail(_ context.Context, msg outboundEmail) error {
 	msg.To = strings.TrimSpace(msg.To)
@@ -55,30 +73,23 @@ func sendEmail(_ context.Context, msg outboundEmail) error {
 	return smtp.SendMail(addr, auth, from, []string{msg.To}, []byte(raw))
 }
 
-func buildOrganizationInviteEmail(org *Organization, invite *OrganizationInvite) outboundEmail {
-	appURL := strings.TrimRight(strings.TrimSpace(config.Cfg.AppURL), "/")
-	apiURL := strings.TrimRight(strings.TrimSpace(config.Cfg.ApiURL), "/")
+func buildOrganizationInviteEmail(org *Organization, invite *OrganizationInvite) (outboundEmail, error) {
+	inviteURL, err := buildOrganizationInviteURL(org.ID, invite.ID)
+	if err != nil {
+		return outboundEmail{}, err
+	}
 
 	lines := []string{
-		fmt.Sprintf("You have been invited to join %s on Atomicbase.", org.Name),
+		fmt.Sprintf("You've been invited to join %s.", org.Name),
 		"",
-		fmt.Sprintf("Organization: %s (%s)", org.Name, org.ID),
 		fmt.Sprintf("Role: %s", invite.Role),
-		fmt.Sprintf("Invite ID: %s", invite.ID),
-		fmt.Sprintf("Expires at: %s", invite.ExpiresAt),
+		fmt.Sprintf("Expires: %s", invite.ExpiresAt),
 		"",
-		"Sign in with this email address before accepting the invite.",
+		"Open the invite link below in your app. If you are not signed in yet, the app will prompt you to sign in first and then accept the invite.",
 	}
 
-	if appURL != "" {
-		lines = append(lines, "", fmt.Sprintf("App: %s", appURL))
-	}
-	if apiURL != "" {
-		lines = append(lines,
-			"",
-			"Acceptance API:",
-			fmt.Sprintf("POST %s/auth/orgs/%s/invites/%s/accept", apiURL, org.ID, invite.ID),
-		)
+	if inviteURL != "" {
+		lines = append(lines, "", "Accept invite:", inviteURL)
 	}
 
 	lines = append(lines, "", "If you were not expecting this invitation, you can ignore this email.")
@@ -87,7 +98,7 @@ func buildOrganizationInviteEmail(org *Organization, invite *OrganizationInvite)
 		To:      invite.Email,
 		Subject: fmt.Sprintf("You're invited to %s on Atomicbase", org.Name),
 		Text:    strings.Join(lines, "\n"),
-	}
+	}, nil
 }
 
 func buildMagicLinkEmail(email, token string) (outboundEmail, error) {

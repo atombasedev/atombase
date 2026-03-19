@@ -49,7 +49,14 @@ var (
 
 func tursocreateDatabase(ctx context.Context, name string) error {
 	url := fmt.Sprintf("https://api.turso.tech/v1/organizations/%s/databases", config.Cfg.TursoOrganization)
-	body, _ := json.Marshal(map[string]any{"name": name})
+	group := strings.TrimSpace(config.Cfg.TursoGroup)
+	if group == "" {
+		group = "default"
+	}
+	body, _ := json.Marshal(map[string]any{
+		"name":  name,
+		"group": group,
+	})
 	return doTursoJSON(ctx, http.MethodPost, url, body, nil)
 }
 

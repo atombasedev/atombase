@@ -9,6 +9,7 @@ import type {
   MagicLinkStartOptions,
   MagicLinkStartResponse,
   Organization,
+  OrganizationContext,
   OrganizationInvite,
   OrganizationMember,
   TransferOrganizationOwnershipOptions,
@@ -98,7 +99,7 @@ export class OrganizationAuthClient extends AuthRequestClient {
     return this.request("POST", "/auth/orgs", options);
   }
 
-  get(orgId: string): Promise<AtomicbaseResponse<Organization>> {
+  get(orgId: string): Promise<AtomicbaseResponse<OrganizationContext>> {
     return this.request("GET", `/auth/orgs/${encodeURIComponent(orgId)}`);
   }
 

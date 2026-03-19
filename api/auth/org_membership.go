@@ -16,6 +16,7 @@ import (
 
 type OrganizationMember struct {
 	UserID    string `json:"userId"`
+	Email     string `json:"email"`
 	Role      string `json:"role"`
 	Status    string `json:"status"`
 	CreatedAt string `json:"createdAt"`
@@ -191,6 +192,9 @@ func (api *API) listOrganizationMembers(ctx context.Context, actor *orgActor, or
 	}
 	if members == nil {
 		return nil, tools.UnauthorizedErr("organization membership is required")
+	}
+	if err := api.populateOrganizationMemberEmails(ctx, members); err != nil {
+		return nil, err
 	}
 	return members, nil
 }
@@ -517,4 +521,44 @@ func (api *API) connOrganizationTenant(ctx context.Context, actor *orgActor, org
 		return nil, nil, err
 	}
 	return db, management, nil
+}
+
+func (api *API) populateOrganizationMemberEmails(ctx context.Context, members []OrganizationMember) error {
+	if api == nil || api.db == nil || len(members) == 0 {
+		return nil
+	}
+
+	placeholders := make([]string, 0, len(members))
+	args := make([]any, 0, len(members))
+	for _, member := range members {
+		placeholders = append(placeholders, "?")
+		args = append(args, member.UserID)
+	}
+
+	rows, err := api.db.QueryContext(ctx, `
+		SELECT id, email
+		FROM atombase_users
+		WHERE id IN (`+strings.Join(placeholders, ",")+`)
+	`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	emails := make(map[string]string, len(members))
+	for rows.Next() {
+		var userID, email string
+		if err := rows.Scan(&userID, &email); err != nil {
+			return err
+		}
+		emails[userID] = email
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for i := range members {
+		members[i].Email = emails[members[i].UserID]
+	}
+	return nil
 }

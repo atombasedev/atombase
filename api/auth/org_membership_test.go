@@ -159,6 +159,12 @@ func (s testOrganizationStore) DeleteOrganization(ctx context.Context, organizat
 func setupOrganizationMembershipAPI(t *testing.T) (*API, *sql.DB, string) {
 	t.Helper()
 
+	origInviteCallback := config.Cfg.AuthInviteCallbackURL
+	config.Cfg.AuthInviteCallbackURL = "http://localhost:3000/invite"
+	t.Cleanup(func() {
+		config.Cfg.AuthInviteCallbackURL = origInviteCallback
+	})
+
 	db := setupAuthTestDB(t)
 	for _, stmt := range []string{
 		`CREATE TABLE atombase_definitions (
@@ -356,6 +362,89 @@ func TestOrganizationMembership_HidesOrganizationExistenceFromOutsiders(t *testi
 	}
 }
 
+func TestGetOrganizationContext_ReturnsOrganizationMembersAndInvites(t *testing.T) {
+	api, tenantDB, _ := setupOrganizationMembershipAPI(t)
+
+	expiresAt := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
+	if _, err := tenantDB.Exec(`
+		INSERT INTO atombase_invites (id, email, role, invited_by, expires_at, created_at)
+		VALUES ('invite-1', 'invitee@example.com', 'member', 'user-owner', ?, ?)
+	`, expiresAt, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatalf("seed invite: %v", err)
+	}
+
+	orgCtx, err := api.getOrganizationContext(context.Background(), &orgActor{
+		Session: &Session{Id: "sess-member", UserID: "user-member"},
+		UserID:  "user-member",
+	}, "org-1")
+	if err != nil {
+		t.Fatalf("get organization context: %v", err)
+	}
+	if orgCtx.Organization == nil || orgCtx.Organization.ID != "org-1" {
+		t.Fatalf("expected organization org-1, got %#v", orgCtx.Organization)
+	}
+	if orgCtx.Member == nil || orgCtx.Member.UserID != "user-member" || orgCtx.Member.Role != "member" {
+		t.Fatalf("expected current member role, got %#v", orgCtx.Member)
+	}
+	if orgCtx.Member.Email != "member@example.com" {
+		t.Fatalf("expected current member email, got %#v", orgCtx.Member)
+	}
+	if len(orgCtx.Members) != 3 {
+		t.Fatalf("expected 3 members, got %d", len(orgCtx.Members))
+	}
+	if orgCtx.Members[0].Email == "" {
+		t.Fatalf("expected member emails to be populated, got %#v", orgCtx.Members)
+	}
+	if len(orgCtx.Invites) != 1 || orgCtx.Invites[0].ID != "invite-1" {
+		t.Fatalf("expected invite-1, got %#v", orgCtx.Invites)
+	}
+}
+
+func TestGetOrganizationContext_ServiceCanReadWithoutMembership(t *testing.T) {
+	api, tenantDB, _ := setupOrganizationMembershipAPI(t)
+
+	expiresAt := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
+	if _, err := tenantDB.Exec(`
+		INSERT INTO atombase_invites (id, email, role, invited_by, expires_at, created_at)
+		VALUES ('invite-2', 'ops@example.com', 'viewer', 'service', ?, ?)
+	`, expiresAt, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatalf("seed invite: %v", err)
+	}
+
+	orgCtx, err := api.getOrganizationContext(context.Background(), &orgActor{IsService: true}, "org-1")
+	if err != nil {
+		t.Fatalf("service get organization context: %v", err)
+	}
+	if orgCtx.Member != nil {
+		t.Fatalf("expected nil member for service actor, got %#v", orgCtx.Member)
+	}
+	if len(orgCtx.Members) != 3 {
+		t.Fatalf("expected 3 members, got %d", len(orgCtx.Members))
+	}
+	if len(orgCtx.Invites) != 1 || orgCtx.Invites[0].ID != "invite-2" {
+		t.Fatalf("expected invite-2, got %#v", orgCtx.Invites)
+	}
+}
+
+func TestGetOrganizationContext_HidesOrganizationExistenceFromOutsiders(t *testing.T) {
+	api, _, _ := setupOrganizationMembershipAPI(t)
+
+	outsider := &orgActor{
+		Session: &Session{Id: "sess-outsider", UserID: "user-outsider"},
+		UserID:  "user-outsider",
+	}
+
+	_, errExisting := api.getOrganizationContext(context.Background(), outsider, "org-1")
+	if !errors.Is(errExisting, tools.ErrUnauthorized) {
+		t.Fatalf("expected unauthorized for existing org outsider access, got %v", errExisting)
+	}
+
+	_, errMissing := api.getOrganizationContext(context.Background(), outsider, "missing-org")
+	if !errors.Is(errMissing, tools.ErrUnauthorized) {
+		t.Fatalf("expected unauthorized for missing org outsider access, got %v", errMissing)
+	}
+}
+
 func TestCreateOrganization_CreatesBackedOrganizationForSessionUser(t *testing.T) {
 	api, _, _ := setupOrganizationMembershipAPI(t)
 
@@ -529,6 +618,57 @@ func TestOrganizationInvites_RollsBackWhenEmailDeliveryFails(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("expected failed email delivery to remove invite row, got %d", count)
+	}
+}
+
+func TestOrganizationInvites_ReinviteReplacesExistingInvite(t *testing.T) {
+	api, tenantDB, _ := setupOrganizationMembershipAPI(t)
+	oldSendEmail := sendEmailFn
+	sendEmailFn = func(_ context.Context, msg outboundEmail) error { return nil }
+	t.Cleanup(func() { sendEmailFn = oldSendEmail })
+
+	first, err := api.createOrganizationInvite(context.Background(), &orgActor{
+		Session: &Session{Id: "sess-owner", UserID: "user-owner"},
+		UserID:  "user-owner",
+	}, "org-1", createOrganizationInviteRequest{
+		Email: "reinvite@example.com",
+		Role:  "member",
+	})
+	if err != nil {
+		t.Fatalf("first invite: %v", err)
+	}
+
+	second, err := api.createOrganizationInvite(context.Background(), &orgActor{
+		Session: &Session{Id: "sess-owner", UserID: "user-owner"},
+		UserID:  "user-owner",
+	}, "org-1", createOrganizationInviteRequest{
+		Email: "reinvite@example.com",
+		Role:  "owner",
+	})
+	if err != nil {
+		t.Fatalf("second invite: %v", err)
+	}
+	if first.ID == second.ID {
+		t.Fatalf("expected reinvite to issue a new invite id, got %q", second.ID)
+	}
+	if second.Role != "owner" {
+		t.Fatalf("expected reinvite to replace role, got %q", second.Role)
+	}
+
+	var count int
+	if err := tenantDB.QueryRow(`SELECT COUNT(*) FROM atombase_invites WHERE email = ?`, "reinvite@example.com").Scan(&count); err != nil {
+		t.Fatalf("count reinvite rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected one invite row after reinvite, got %d", count)
+	}
+
+	var storedID, storedRole string
+	if err := tenantDB.QueryRow(`SELECT id, role FROM atombase_invites WHERE email = ?`, "reinvite@example.com").Scan(&storedID, &storedRole); err != nil {
+		t.Fatalf("query reinvite row: %v", err)
+	}
+	if storedID != second.ID || storedRole != "owner" {
+		t.Fatalf("expected replaced invite row, got id=%q role=%q", storedID, storedRole)
 	}
 }
 
