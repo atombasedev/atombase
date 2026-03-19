@@ -487,6 +487,71 @@ func TestUpsertJSON_AllPKColumnsPresent(t *testing.T) {
 }
 
 // =============================================================================
+// Insert Primary Key Behavior
+// Criteria B: plain insert may omit generated PK, upsert may not
+// =============================================================================
+
+func TestInsertJSON_AllowsOmittingAutoPrimaryKey(t *testing.T) {
+	db := setupTestDB(t, schemaUsers)
+	defer db.Close()
+	schema := loadSchema(t, db)
+
+	dao := &TenantConnection{
+		Client: db,
+		Schema: schema,
+	}
+
+	req := InsertRequest{
+		Data: []map[string]any{
+			{"name": "Alice", "email": "alice@example.com"},
+		},
+	}
+
+	result, err := dao.InsertJSON(context.Background(), "users", req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(result, &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if _, ok := resp["last_insert_id"]; !ok {
+		t.Fatalf("expected last_insert_id response, got %#v", resp)
+	}
+
+	var id int
+	if err := db.QueryRow(`SELECT id FROM users WHERE email = 'alice@example.com'`).Scan(&id); err != nil {
+		t.Fatalf("failed to load inserted row: %v", err)
+	}
+	if id == 0 {
+		t.Fatalf("expected generated primary key, got %d", id)
+	}
+}
+
+func TestInsertJSON_MissingAutoPrimaryKeyDoesNotReturnUpsertError(t *testing.T) {
+	db := setupTestDB(t, schemaUsers)
+	defer db.Close()
+	schema := loadSchema(t, db)
+
+	dao := &TenantConnection{
+		Client: db,
+		Schema: schema,
+	}
+
+	req := InsertRequest{
+		Data: []map[string]any{
+			{"name": "Bob"},
+		},
+	}
+
+	_, err := dao.InsertJSON(context.Background(), "users", req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// =============================================================================
 // Update/Delete Require WHERE Clause
 // Criteria B: validation edge case
 // =============================================================================

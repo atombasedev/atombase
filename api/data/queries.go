@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/atombasedev/atombase/config"
+	"github.com/atombasedev/atombase/definitions"
 	"github.com/atombasedev/atombase/tools"
 )
 
@@ -149,7 +150,7 @@ func (dao *TenantConnection) insertJSON(ctx context.Context, exec Executor, rela
 	if len(req.Data[0]) == 0 {
 		return nil, errors.New("insert rows must have at least one column")
 	}
-	policy, err := dao.compilePolicy(ctx, relation, "insert", req.Data[0])
+	policy, err := dao.compilePolicyWithNewAlias(ctx, relation, "insert", "__ab_new")
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +165,9 @@ func (dao *TenantConnection) insertJSON(ctx context.Context, exec Executor, rela
 	}
 
 	query, args := buildInsertSelectSQL("INSERT", relation, columns, req.Data, policy)
+	if err := dao.validateInsertRows(ctx, exec, columns, req.Data, policy); err != nil {
+		return nil, err
+	}
 
 	if len(req.Returning) > 0 {
 		retQuery, err := table.BuildReturningFromJSON(req.Returning)
@@ -211,7 +215,7 @@ func (dao *TenantConnection) insertIgnoreJSON(ctx context.Context, exec Executor
 	if len(req.Data[0]) == 0 {
 		return nil, errors.New("insert rows must have at least one column")
 	}
-	policy, err := dao.compilePolicy(ctx, relation, "insert", req.Data[0])
+	policy, err := dao.compilePolicyWithNewAlias(ctx, relation, "insert", "__ab_new")
 	if err != nil {
 		return nil, err
 	}
@@ -226,6 +230,9 @@ func (dao *TenantConnection) insertIgnoreJSON(ctx context.Context, exec Executor
 	}
 
 	query, args := buildInsertSelectSQL("INSERT OR IGNORE", relation, columns, req.Data, policy)
+	if err := dao.validateInsertRows(ctx, exec, columns, req.Data, policy); err != nil {
+		return nil, err
+	}
 
 	if len(req.Returning) > 0 {
 		retQuery, err := table.BuildReturningFromJSON(req.Returning)
@@ -273,7 +280,7 @@ func (dao *TenantConnection) upsertJSON(ctx context.Context, exec Executor, rela
 	if len(req.Data[0]) == 0 {
 		return nil, errors.New("upsert rows must have at least one column")
 	}
-	policy, err := dao.compilePolicy(ctx, relation, "insert", req.Data[0])
+	policy, err := dao.compilePolicyWithNewAlias(ctx, relation, "insert", "__ab_new")
 	if err != nil {
 		return nil, err
 	}
@@ -286,8 +293,23 @@ func (dao *TenantConnection) upsertJSON(ctx context.Context, exec Executor, rela
 		}
 		columns = append(columns, col)
 	}
+	for _, pkCol := range table.Pk {
+		found := false
+		for _, col := range columns {
+			if col == pkCol {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("upsert requires primary key column %q", pkCol)
+		}
+	}
 
 	query, args := buildInsertSelectSQL("INSERT", relation, columns, req.Data, policy)
+	if err := dao.validateInsertRows(ctx, exec, columns, req.Data, policy); err != nil {
+		return nil, err
+	}
 
 	if len(table.Pk) == 0 {
 		query += " ON CONFLICT(rowid) DO UPDATE SET "
@@ -326,6 +348,26 @@ func (dao *TenantConnection) upsertJSON(ctx context.Context, exec Executor, rela
 		return nil, fmt.Errorf("failed to get rows affected: %w", err)
 	}
 	return json.Marshal(map[string]any{"rows_affected": rowsAffected})
+}
+
+func (dao *TenantConnection) validateInsertRows(ctx context.Context, exec Executor, columns []string, rows []map[string]any, policy definitions.CompiledPredicate) error {
+	if policy.SQL == "" {
+		return nil
+	}
+
+	sourceSQL, args := buildInsertSourceSQL(columns, rows)
+	query := "SELECT COUNT(*) FROM " + sourceSQL + " WHERE NOT (" + policy.SQL + ")"
+	args = append(args, policy.Args...)
+	query, args = applyPolicyCTE(query, args, dao, policy.NeedsMembershipCTE)
+
+	var rejected int
+	if err := exec.QueryRowContext(ctx, query, args...).Scan(&rejected); err != nil {
+		return err
+	}
+	if rejected > 0 {
+		return tools.UnauthorizedErr("request does not satisfy definition policy")
+	}
+	return nil
 }
 
 // UpdateJSON modifies rows using JSON body format.

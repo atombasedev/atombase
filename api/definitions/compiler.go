@@ -14,6 +14,7 @@ type CompileInput struct {
 	Table     string
 	Operation string
 	NewValues map[string]any
+	NewAlias  string
 }
 
 type Compiler struct{}
@@ -118,6 +119,9 @@ func compileLeaf(cond Condition, input CompileInput) (string, []any, bool, bool,
 	case "auth":
 		return compileAuthLeaf(fieldName, cond.Op, cond.Value, input)
 	case "new":
+		if input.NewAlias != "" {
+			return compileNewLeaf(fieldName, cond.Op, cond.Value, input)
+		}
 		ok, err := evalNewLeaf(fieldName, cond.Op, cond.Value, input)
 		return "", nil, ok, false, err
 	case "old":
@@ -175,6 +179,57 @@ func evalNewLeaf(fieldName, op string, raw any, input CompileInput) (bool, error
 		return false, nil
 	}
 	return compareValues(value, op, resolveValue(raw, input))
+}
+
+func compileNewLeaf(fieldName, op string, raw any, input CompileInput) (string, []any, bool, bool, error) {
+	if err := tools.ValidateIdentifier(fieldName); err != nil {
+		return "", nil, false, false, err
+	}
+
+	lhs := fmt.Sprintf("%s.[%s]", input.NewAlias, fieldName)
+
+	if input.Target.DefinitionType == DefinitionTypeOrganization {
+		if value, ok := raw.(string); ok {
+			if value == "auth.role" {
+				operator := sqlOperator(op)
+				sqlExpr := fmt.Sprintf("EXISTS (SELECT 1 FROM __ab_membership m WHERE m.role %s %s.[%s] AND m.user_id = ?)", operator, input.NewAlias, fieldName)
+				return sqlExpr, []any{input.Principal.UserID}, true, true, nil
+			}
+			if value == "auth.id" {
+				return fmt.Sprintf("%s %s ?", lhs, sqlOperator(op)), []any{input.Principal.UserID}, true, false, nil
+			}
+		}
+	}
+
+	if op == "is" || op == "is_not" {
+		return fmt.Sprintf("%s %s NULL", lhs, sqlOperator(op)), nil, true, false, nil
+	}
+
+	if op == "in" {
+		list, ok := resolveValue(raw, input).([]any)
+		if !ok {
+			return "", nil, false, false, fmt.Errorf("in operator requires array value")
+		}
+		if len(list) == 0 {
+			return "", nil, false, false, nil
+		}
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(list)), ",")
+		args := make([]any, 0, len(list))
+		for _, item := range list {
+			args = append(args, resolveValue(item, input))
+		}
+		return fmt.Sprintf("%s IN (%s)", lhs, placeholders), args, true, false, nil
+	}
+
+	if ref, ok := raw.(string); ok && strings.HasPrefix(ref, "new.") {
+		otherField := strings.TrimPrefix(ref, "new.")
+		if err := tools.ValidateIdentifier(otherField); err != nil {
+			return "", nil, false, false, err
+		}
+		return fmt.Sprintf("%s %s %s.[%s]", lhs, sqlOperator(op), input.NewAlias, otherField), nil, true, false, nil
+	}
+
+	return fmt.Sprintf("%s %s ?", lhs, sqlOperator(op)), []any{resolveValue(raw, input)}, true, false, nil
 }
 
 func compileOldLeaf(fieldName, op string, raw any, input CompileInput) (string, []any, bool, bool, error) {

@@ -185,16 +185,6 @@ func (api *API) handleQueryRows() http.HandlerFunc {
 					if err := tools.DecodeJSON(req.Body, &insertReq); err != nil {
 						return nil, err
 					}
-					if len(insertReq.Data) > 0 {
-						if _, err := api.definitions.CompilePolicy(ctx, dao.Principal, definitions.DatabaseTarget{
-							DatabaseID:        dao.ID,
-							DefinitionID:      dao.DefinitionID,
-							DefinitionType:    dao.DefinitionType,
-							DefinitionVersion: dao.DatabaseVersion,
-						}, table, "insert", insertReq.Data[0]); err != nil {
-							return nil, err
-						}
-					}
 					return decodeResultPayload(dao.InsertJSON(ctx, table, insertReq))
 				}
 				if onConflict == "replace" {
@@ -202,32 +192,12 @@ func (api *API) handleQueryRows() http.HandlerFunc {
 					if err := tools.DecodeJSON(req.Body, &upsertReq); err != nil {
 						return nil, err
 					}
-					if len(upsertReq.Data) > 0 {
-						if _, err := api.definitions.CompilePolicy(ctx, dao.Principal, definitions.DatabaseTarget{
-							DatabaseID:        dao.ID,
-							DefinitionID:      dao.DefinitionID,
-							DefinitionType:    dao.DefinitionType,
-							DefinitionVersion: dao.DatabaseVersion,
-						}, table, "insert", upsertReq.Data[0]); err != nil {
-							return nil, err
-						}
-					}
 					return decodeResultPayload(dao.UpsertJSON(ctx, table, upsertReq))
 				}
 				if onConflict == "ignore" {
 					var ignoreReq InsertRequest
 					if err := tools.DecodeJSON(req.Body, &ignoreReq); err != nil {
 						return nil, err
-					}
-					if len(ignoreReq.Data) > 0 {
-						if _, err := api.definitions.CompilePolicy(ctx, dao.Principal, definitions.DatabaseTarget{
-							DatabaseID:        dao.ID,
-							DefinitionID:      dao.DefinitionID,
-							DefinitionType:    dao.DefinitionType,
-							DefinitionVersion: dao.DatabaseVersion,
-						}, table, "insert", ignoreReq.Data[0]); err != nil {
-							return nil, err
-						}
 					}
 					return decodeResultPayload(dao.InsertIgnoreJSON(ctx, table, ignoreReq))
 				}
